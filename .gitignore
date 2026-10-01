@@ -1,2 +1,34 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# Python
+.venv/
 venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Runtime data
+data/
+freqtrade/user_data/data/
+freqtrade/user_data/tradesv3.sqlite*
+postgres-data/
+redis-data/
+
+# Editors / local tooling
 .kilo/
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,8 @@
+pyproject.toml
+src/trading_core/__init__.py
+src/trading_core/risk.py
+src/trading_core/strategy.py
+src/trading_core.egg-info/PKG-INFO
+src/trading_core.egg-info/SOURCES.txt
+src/trading_core.egg-info/dependency_links.txt
+src/trading_core.egg-info/top_level.txt

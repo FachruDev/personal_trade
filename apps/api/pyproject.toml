@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trading-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["asyncpg>=0.30,<1", "fastapi>=0.115,<1", "httpx>=0.28,<1", "pydantic-settings>=2.7,<3", "redis>=5.2,<6", "uvicorn[standard]>=0.34,<1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

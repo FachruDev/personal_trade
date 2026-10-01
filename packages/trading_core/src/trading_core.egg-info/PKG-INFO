@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: trading-core
+Version: 0.1.0
+Summary: Deterministic market-regime, signal, and risk logic for the trading bot
+Requires-Python: >=3.12
