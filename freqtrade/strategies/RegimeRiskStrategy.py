@@ -25,6 +25,26 @@ class RegimeRiskStrategy(IStrategy):
     use_exit_signal = True
     risk = RiskSettings()
 
+    @property
+    def protections(self) -> list[dict]:
+        return [
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 24,
+                "trade_limit": 3,
+                "stop_duration_candles": 6,
+                "only_per_pair": False,
+            },
+            {
+                "method": "MaxDrawdown",
+                "lookback_period_candles": 24,
+                "trade_limit": 1,
+                "stop_duration_candles": 24,
+                "max_allowed_drawdown": 0.03,
+                "calculation_mode": "equity",
+            },
+        ]
+
     @informative("4h")
     def populate_indicators_4h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe["ema50"] = ta.EMA(dataframe, timeperiod=50)

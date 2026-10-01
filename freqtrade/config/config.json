@@ -11,13 +11,9 @@
   "cancel_open_orders_on_exit": true,
   "exchange": {"name": "binance", "key": "", "secret": "", "ccxt_config": {"enableRateLimit": true}, "pair_whitelist": ["BTC/USDT", "ETH/USDT"], "pair_blacklist": ["BNB/USDT"]},
   "pairlists": [{"method": "StaticPairList"}],
-  "protections": [
-    {"method": "StoplossGuard", "lookback_period_candles": 24, "trade_limit": 3, "stop_duration_candles": 6, "only_per_pair": false},
-    {"method": "MaxDrawdown", "lookback_period_candles": 24, "trade_limit": 1, "stop_duration_candles": 24, "max_allowed_drawdown": 0.03, "calculation_mode": "equity"}
-  ],
   "order_types": {"entry": "limit", "exit": "limit", "stoploss": "market", "stoploss_on_exchange": false},
   "entry_pricing": {"price_side": "same", "use_order_book": true, "order_book_top": 1},
   "exit_pricing": {"price_side": "same", "use_order_book": true, "order_book_top": 1},
-  "api_server": {"enabled": true, "listen_ip_address": "0.0.0.0", "listen_port": 8080, "verbosity": "error", "username": "freqtrader", "password": "override-with-environment", "jwt_secret_key": "override-with-environment"},
+  "api_server": {"enabled": true, "listen_ip_address": "0.0.0.0", "listen_port": 8080, "verbosity": "error", "username": "freqtrader", "password": "local-development-password", "jwt_secret_key": "local-development-jwt-secret-change-before-production"},
   "initial_state": "running"
 }
