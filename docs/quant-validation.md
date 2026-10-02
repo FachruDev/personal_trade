@@ -102,3 +102,40 @@ This experiment adds one independent price-momentum condition: the 1H close must
 The 20-candle condition is the strongest of the tested filters: it reduces loss and drawdown across development and out-of-sample periods. It remains negative in both periods, and its two validation trades make the positive validation result unusable as evidence. It is **not** promoted into dry-run. The result supports continuing to investigate entry quality, with a new independent signal rather than more threshold tuning.
 
 The next controlled experiment should test a higher-timeframe price-structure confirmation, for example a 4H higher-high/higher-low rule. Position sizing, stop-loss, take-profit, pair universe, and external data stay fixed until a candidate passes the metric gate.
+
+## Experiment 004 — 4H market structure and composite entry quality
+
+The market-structure candidate requires the completed 4H candle to have both a higher high and a higher low than the preceding 4H candle. The composite candidate adds that rule to the 20-candle 1H breakout condition from Experiment 003.
+
+| Entry condition | Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 4H higher-high + higher-low | Development | 120 | -17.56% | 0.59 | -1.46 USDT | 19.39% |
+| 4H higher-high + higher-low | Validation | 3 | +0.69% | 2.19 | +2.31 USDT | 0.57% |
+| 4H higher-high + higher-low | Out-of-sample | 28 | +0.52% | 1.06 | +0.18 USDT | 4.49% |
+| Structure + 1H 20-candle breakout | Development | 47 | -5.39% | 0.69 | -1.15 USDT | 9.71% |
+| Structure + 1H 20-candle breakout | Validation | 2 | +1.12% | 12.03 | +5.59 USDT | 0.10% |
+| Structure + 1H 20-candle breakout | Out-of-sample | 9 | +0.20% | 1.08 | +0.23 USDT | 1.40% |
+
+### Decision
+
+The composite condition is the current least-bad candidate: it materially reduces loss and drawdown, and is positive out-of-sample. It remains negative in development and has only two validation trades, so it is not a live or dry-run promotion candidate. The small trade sample means further threshold tuning would be especially prone to overfitting.
+
+Pair diagnostics reinforce that conclusion. In the composite development period, ETH/USDT had 21 trades and +4.49 USDT while BTC/USDT had 26 trades and -58.37 USDT. In out-of-sample, the result reversed: BTC/USDT had 5 trades and +15.40 USDT, while ETH/USDT had 4 trades and -13.37 USDT. Neither pair can be removed on this evidence.
+
+## Experiment 005 — defensive time stop
+
+The baseline custom exit was supplemented with a time stop that closes a position only when it remains non-positive after 24 or 48 hours. This was tested after the exit-reason diagnostic showed stop-loss exits were the main source of loss.
+
+| Time stop | Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| None (baseline) | Development | 167 | -20.97% | 0.64 | -1.26 USDT | 21.26% |
+| 24 hours | Development | 180 | -21.91% | 0.63 | -1.22 USDT | 22.52% |
+| 24 hours | Validation | 4 | +0.16% | 1.14 | +0.40 USDT | 1.16% |
+| 24 hours | Out-of-sample | 42 | -2.61% | 0.83 | -0.62 USDT | 8.74% |
+| 48 hours | Development | 173 | -21.17% | 0.64 | -1.22 USDT | 21.46% |
+| 48 hours | Validation | 4 | +0.10% | 1.09 | +0.26 USDT | 1.16% |
+| 48 hours | Out-of-sample | 42 | -2.61% | 0.83 | -0.62 USDT | 8.74% |
+
+### Decision
+
+Neither time stop improves the strategy; the 24-hour condition worsens development drawdown and the 48-hour condition produces no meaningful out-of-sample change. This exit branch is closed. The next research phase should add a genuinely independent data source or a different strategy family, rather than continuing to tune filters around the same EMA/RSI/MACD signal.
