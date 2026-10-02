@@ -59,6 +59,8 @@ Quant dan risk engine tetap deterministik. AI hanya mengklasifikasi konteks beri
 4. Tambahkan health/readiness checks untuk koneksi PostgreSQL, Redis, Freqtrade, dan Binance public market data.
 5. Buat retention policy untuk audit dan log agar volume data terkendali.
 
+**Progress:** lifecycle webhook Freqtrade untuk status bot, entry, exit, fill, dan cancellation sudah dikirim ke FastAPI internal dan disimpan pada PostgreSQL. Event kandidat signal, risk rejection, protection trigger, dan alasan HOLD tetap menjadi pekerjaan berikutnya.
+
 **Selesai bila:** satu trade dry-run dapat ditelusuri dari candle kandidat sampai exit, termasuk alasan bot memilih HOLD atau menolak trade.
 
 ## Fase 3 — Data adapters: global market dan macro

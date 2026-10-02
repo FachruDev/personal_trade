@@ -9,6 +9,10 @@ Binance Spot dry-run bot for BTC/USDT and ETH/USDT. The strategy uses a 4H marke
 2. Start Docker Desktop, then run `docker compose --env-file .env.example up --build`.
 3. Check `http://localhost:8000/health`.
 
+Freqtrade sends internal lifecycle webhooks to the API. These events are stored
+in PostgreSQL and are available through `GET /v1/decisions`; the local dashboard
+uses that endpoint for its decision timeline.
+
 ## Backtest
 
 Download historical candles:

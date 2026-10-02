@@ -7,7 +7,7 @@ import json
 import asyncpg
 import httpx
 import redis.asyncio as redis
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 
 from .settings import settings
 
@@ -65,6 +65,18 @@ async def decisions(limit: int = 50) -> list[dict]:
     async with app.state.database.acquire() as connection:
         rows = await connection.fetch("SELECT id, event_type, payload, created_at FROM bot_audit_events ORDER BY id DESC LIMIT $1", min(max(limit, 1), 100))
     return [dict(row) for row in rows]
+
+
+@app.post("/internal/freqtrade", status_code=202)
+async def freqtrade_webhook(request: Request, payload: dict = Body()) -> dict:
+    """Accept lifecycle events from the Freqtrade container only.
+
+    This endpoint is used on the Compose bridge network only. It does not expose
+    credentials in URL paths or webhook payloads.
+    """
+    event_type = str(payload.get("event_type", "freqtrade_event"))
+    await record_event(event_type, {"source": "freqtrade", **payload})
+    return {"status": "accepted"}
 
 
 @app.post("/v1/bot/stop")

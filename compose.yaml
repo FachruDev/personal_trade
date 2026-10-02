@@ -51,9 +51,12 @@ services:
       export FREQTRADE__API_SERVER__USERNAME="$$FREQTRADE_API_USERNAME";
       export FREQTRADE__API_SERVER__PASSWORD="$$FREQTRADE_API_PASSWORD";
       export FREQTRADE__API_SERVER__JWT_SECRET_KEY="$$FREQTRADE_JWT_SECRET";
+      export FREQTRADE__WEBHOOK__URL="http://api:8000/internal/freqtrade";
       exec freqtrade trade --config /freqtrade/user_data/config.json --strategy RegimeRiskStrategy'
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["./freqtrade:/freqtrade/user_data"]
+    depends_on:
+      api: {condition: service_healthy}
     restart: unless-stopped
 
 volumes:

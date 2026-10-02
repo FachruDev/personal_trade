@@ -9,11 +9,23 @@
   "fiat_display_currency": "USD",
   "timeframe": "1h",
   "cancel_open_orders_on_exit": true,
-  "exchange": {"name": "binance", "key": "", "secret": "", "ccxt_config": {"enableRateLimit": true}, "pair_whitelist": ["BTC/USDT", "ETH/USDT"], "pair_blacklist": ["BNB/USDT"]},
+  "exchange": {"name": "binance", "key": "", "secret": "", "ccxt_config": {"enableRateLimit": true, "options": {"adjustForTimeDifference": true}}, "pair_whitelist": ["BTC/USDT", "ETH/USDT"], "pair_blacklist": ["BNB/USDT"]},
   "pairlists": [{"method": "StaticPairList"}],
   "order_types": {"entry": "limit", "exit": "limit", "stoploss": "market", "stoploss_on_exchange": false},
   "entry_pricing": {"price_side": "same", "use_order_book": true, "order_book_top": 1},
   "exit_pricing": {"price_side": "same", "use_order_book": true, "order_book_top": 1},
   "api_server": {"enabled": true, "listen_ip_address": "0.0.0.0", "listen_port": 8080, "verbosity": "error", "username": "freqtrader", "password": "local-development-password", "jwt_secret_key": "local-development-jwt-secret-change-before-production"},
+  "webhook": {
+    "enabled": true,
+    "url": "http://api:8000/internal/freqtrade/configuration-required",
+    "format": "json",
+    "status": {"event_type": "bot_status", "status": "{status}"},
+    "entry": {"event_type": "entry_created", "trade_id": "{trade_id}", "pair": "{pair}", "direction": "{direction}", "stake_amount": "{stake_amount}", "enter_tag": "{enter_tag}"},
+    "entry_fill": {"event_type": "entry_filled", "trade_id": "{trade_id}", "pair": "{pair}", "open_rate": "{open_rate}", "stake_amount": "{stake_amount}", "enter_tag": "{enter_tag}"},
+    "entry_cancel": {"event_type": "entry_cancelled", "trade_id": "{trade_id}", "pair": "{pair}", "order_type": "{order_type}"},
+    "exit": {"event_type": "exit_created", "trade_id": "{trade_id}", "pair": "{pair}", "exit_reason": "{exit_reason}", "current_rate": "{current_rate}"},
+    "exit_fill": {"event_type": "exit_filled", "trade_id": "{trade_id}", "pair": "{pair}", "close_rate": "{close_rate}", "profit_amount": "{profit_amount}", "profit_ratio": "{profit_ratio}", "exit_reason": "{exit_reason}", "is_final_exit": "{is_final_exit}"},
+    "exit_cancel": {"event_type": "exit_cancelled", "trade_id": "{trade_id}", "pair": "{pair}", "exit_reason": "{exit_reason}"}
+  },
   "initial_state": "running"
 }
