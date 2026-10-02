@@ -61,4 +61,44 @@ Only the 4H ADX minimum was changed. The baseline is 20; the candidates are 25 a
 
 ADX 30 reduces out-of-sample drawdown and produces a marginal positive result, but it fails the development gate. It is **not** promoted into the dry-run configuration. This experiment only shows that stronger trend filtering is worth investigating; it does not establish a viable strategy.
 
-The next controlled experiment will evaluate the 1H momentum entry filter while retaining ADX 20 as the baseline. Risk sizing, stop-loss, take-profit, pair universe, and external data remain fixed until a candidate passes all periods.
+## Experiment 002 — 1H RSI momentum threshold
+
+Only the lower bound of the 1H RSI entry filter was changed. The baseline range is 45–65. The candidates use 50–65 and 55–65; ADX remains 20 and every other decision variable is unchanged.
+
+| RSI range | Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 45–65 (baseline) | Development | 167 | -20.97% | 0.64 | -1.26 USDT | 21.26% |
+| 45–65 (baseline) | Validation | 4 | +0.10% | 1.09 | +0.26 USDT | 1.16% |
+| 45–65 (baseline) | Out-of-sample | 42 | -2.61% | 0.83 | -0.62 USDT | 8.74% |
+| 50–65 | Development | 167 | -20.97% | 0.64 | -1.26 USDT | 21.26% |
+| 50–65 | Validation | 4 | +0.10% | 1.09 | +0.26 USDT | 1.16% |
+| 50–65 | Out-of-sample | 42 | -2.61% | 0.83 | -0.62 USDT | 8.74% |
+| 55–65 | Development | 164 | -20.72% | 0.64 | -1.26 USDT | 21.00% |
+| 55–65 | Validation | 4 | +0.10% | 1.09 | +0.26 USDT | 1.16% |
+| 55–65 | Out-of-sample | 40 | -2.06% | 0.86 | -0.51 USDT | 7.77% |
+
+### Decision
+
+RSI 50 is identical to the baseline, which means every baseline entry already had RSI above 50 after the other filters were applied. RSI 55 removes only three development and two out-of-sample trades. It improves the latest out-of-sample result, but development remains materially negative and validation still has only four trades. Neither setting is promoted to dry-run.
+
+## Experiment 003 — 1H close breakout confirmation
+
+This experiment adds one independent price-momentum condition: the 1H close must be greater than the highest high of the preceding 10 or 20 completed candles. The baseline uses no breakout condition. All other filters, risk settings, and test periods are unchanged.
+
+| Breakout lookback | Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| None (baseline) | Development | 167 | -20.97% | 0.64 | -1.26 USDT | 21.26% |
+| None (baseline) | Validation | 4 | +0.10% | 1.09 | +0.26 USDT | 1.16% |
+| None (baseline) | Out-of-sample | 42 | -2.61% | 0.83 | -0.62 USDT | 8.74% |
+| 10 candles | Development | 100 | -13.12% | 0.65 | -1.31 USDT | 15.01% |
+| 10 candles | Validation | 3 | +0.53% | 1.76 | +1.76 USDT | 0.68% |
+| 10 candles | Out-of-sample | 24 | -0.47% | 0.94 | -0.20 USDT | 3.11% |
+| 20 candles | Development | 71 | -8.21% | 0.69 | -1.16 USDT | 9.82% |
+| 20 candles | Validation | 2 | +1.12% | 12.03 | +5.59 USDT | 0.10% |
+| 20 candles | Out-of-sample | 11 | -0.09% | 0.97 | -0.08 USDT | 1.40% |
+
+### Decision
+
+The 20-candle condition is the strongest of the tested filters: it reduces loss and drawdown across development and out-of-sample periods. It remains negative in both periods, and its two validation trades make the positive validation result unusable as evidence. It is **not** promoted into dry-run. The result supports continuing to investigate entry quality, with a new independent signal rather than more threshold tuning.
+
+The next controlled experiment should test a higher-timeframe price-structure confirmation, for example a 4H higher-high/higher-low rule. Position sizing, stop-loss, take-profit, pair universe, and external data stay fixed until a candidate passes the metric gate.

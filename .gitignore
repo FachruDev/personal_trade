@@ -26,6 +26,7 @@ coverage/
 data/
 freqtrade/data/
 freqtrade/backtest_results/
+freqtrade/strategies/.experiments/
 freqtrade/user_data/data/
 freqtrade/user_data/tradesv3.sqlite*
 postgres-data/
