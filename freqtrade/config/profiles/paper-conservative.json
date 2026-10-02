@@ -1,0 +1,13 @@
+{
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "tradable_balance_ratio": 0.25,
+  "max_open_trades": 1,
+  "cancel_open_orders_on_exit": true,
+  "unfilledtimeout": {
+    "entry": 10,
+    "exit": 10,
+    "unit": "minutes"
+  },
+  "initial_state": "running"
+}

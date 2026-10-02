@@ -4,7 +4,9 @@ from datetime import datetime
 import json
 import logging
 import math
+import os
 
+import requests
 import talib.abstract as ta
 from pandas import DataFrame
 
@@ -38,6 +40,29 @@ class RegimeRiskStrategy(IStrategy):
             self.dp.send_msg(json.dumps({"event_type": event_type, **payload}, default=str))
         except Exception:
             logger.warning("Unable to send audit event '%s'.", event_type, exc_info=True)
+
+    @staticmethod
+    def _context_shadow() -> dict[str, object]:
+        """Read advisory context for audit only; it never gates an order."""
+        url = os.getenv("CONTEXT_FUSION_URL", "http://api:8000/v1/context/fusion")
+        try:
+            response = requests.get(url, timeout=1)
+            response.raise_for_status()
+            payload = response.json()
+            recommendation_payload = payload.get("recommendation")
+            if not isinstance(recommendation_payload, dict):
+                raise ValueError("invalid context fusion response")
+            recommendation = recommendation_payload.get("decision")
+            multiplier = recommendation_payload.get("risk_multiplier")
+            if not isinstance(recommendation, str) or not isinstance(multiplier, (int, float)):
+                raise ValueError("invalid context fusion recommendation")
+            return {
+                "available": True,
+                "recommendation": recommendation,
+                "risk_multiplier": round(float(multiplier), 4),
+            }
+        except (requests.RequestException, ValueError, TypeError):
+            return {"available": False}
 
     @staticmethod
     def _number(row, field: str) -> float | None:
@@ -97,7 +122,12 @@ class RegimeRiskStrategy(IStrategy):
             "adx_4h": round(values["adx_4h"], 4),
         }
         if signal is Signal.BUY:
-            self._send_audit_event("quant_candidate", **details, enter_tag="bull_regime_quant")
+            self._send_audit_event(
+                "quant_candidate",
+                **details,
+                enter_tag="bull_regime_quant",
+                context_shadow=self._context_shadow(),
+            )
             return
 
         failed_conditions = []
@@ -123,6 +153,31 @@ class RegimeRiskStrategy(IStrategy):
                 self._audit_latest_decision(pair)
             except Exception:
                 logger.warning("Unable to audit latest decision for %s.", pair, exc_info=True)
+
+    def confirm_trade_entry(
+        self,
+        pair: str,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        current_time: datetime,
+        entry_tag: str | None,
+        side: str,
+        **kwargs,
+    ) -> bool:
+        """Fail closed when the operator kill-switch cannot be cleared."""
+        url = os.getenv("BOT_KILL_SWITCH_URL", "http://api:8000/internal/kill-switch")
+        try:
+            response = requests.get(url, timeout=1)
+            response.raise_for_status()
+            if not bool(response.json().get("enabled")):
+                return True
+            reason = "kill_switch_enabled"
+        except (requests.RequestException, ValueError, TypeError):
+            reason = "kill_switch_state_unavailable"
+        self._send_audit_event("risk_rejected", pair=pair, entry_rate=round(rate, 8), entry_tag=entry_tag, reason=reason)
+        return False
 
     @property
     def protections(self) -> list[dict]:
@@ -216,10 +271,17 @@ class RegimeRiskStrategy(IStrategy):
         if not initial_risk:
             return None
         if current_profit >= initial_risk * self.risk.take_profit_one_r:
-            if not trade.get_custom_data("breakeven_logged", default=False):
-                trade.set_custom_data("breakeven_logged", True)
-                self._send_audit_event("stoploss_moved_breakeven", pair=pair, trade_id=trade.id, current_profit=round(current_profit, 8))
-            return stoploss_from_absolute(trade.open_rate, current_rate=current_rate, is_short=False)
+            trailing_rate = max(trade.open_rate, current_rate * (1 - initial_risk))
+            if not trade.get_custom_data("trailing_stop_logged", default=False):
+                trade.set_custom_data("trailing_stop_logged", True)
+                self._send_audit_event(
+                    "trailing_stop_started",
+                    pair=pair,
+                    trade_id=trade.id,
+                    current_profit=round(current_profit, 8),
+                    trailing_rate=round(trailing_rate, 8),
+                )
+            return stoploss_from_absolute(trailing_rate, current_rate=current_rate, is_short=False)
         return stoploss_from_absolute(trade.open_rate * (1 - initial_risk), current_rate=current_rate, is_short=False)
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float, min_stake: float | None, max_stake: float, current_entry_rate: float, current_exit_rate: float, current_entry_profit: float, current_exit_profit: float, **kwargs) -> tuple[float | None, str | None]:
@@ -238,3 +300,15 @@ class RegimeRiskStrategy(IStrategy):
                 self._send_audit_event("take_profit_2_requested", pair=pair, trade_id=trade.id, current_profit=round(current_profit, 8))
             return "take_profit_2"
         return None
+
+
+class LimitedRiskRegimeRiskStrategy(RegimeRiskStrategy):
+    """Static low-risk variant used by paper and limited-live profiles."""
+
+    risk = RiskSettings(
+        risk_per_trade=0.0025,
+        max_risk_per_trade=0.0025,
+        max_open_trades=1,
+        max_portfolio_risk=0.0025,
+        daily_loss_limit=0.01,
+    )

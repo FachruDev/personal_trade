@@ -1,5 +1,7 @@
 # Environment and secrets
 .env
+freqtrade/config/profiles/live.local.json
+freqtrade/config/profiles/live-release-approval.local.json
 .env.*
 !.env.example
 *.pem
@@ -26,6 +28,7 @@ coverage/
 data/
 freqtrade/data/
 freqtrade/backtest_results/
+docs/quant-reports/
 freqtrade/strategies/.experiments/
 freqtrade/user_data/data/
 freqtrade/user_data/tradesv3.sqlite*

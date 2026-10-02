@@ -6,7 +6,6 @@
   "stake_amount": "unlimited",
   "tradable_balance_ratio": 0.99,
   "max_open_trades": 2,
-  "fiat_display_currency": "USD",
   "timeframe": "1h",
   "cancel_open_orders_on_exit": true,
   "exchange": {"name": "binance", "key": "", "secret": "", "ccxt_config": {"enableRateLimit": true, "options": {"adjustForTimeDifference": true}}, "pair_whitelist": ["BTC/USDT", "ETH/USDT"], "pair_blacklist": ["BNB/USDT"]},

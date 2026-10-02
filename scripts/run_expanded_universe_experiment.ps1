@@ -1,0 +1,22 @@
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$resultPath = Join-Path $projectRoot "freqtrade/backtest_results"
+$periods = @(
+    @{ Name = "development"; Range = "20231013-20251001" },
+    @{ Name = "validation"; Range = "20251001-20260401" },
+    @{ Name = "out_of_sample"; Range = "20260401-20261002" }
+)
+
+foreach ($period in $periods) {
+    & docker compose --env-file .env.example run --rm freqtrade freqtrade backtesting `
+        --config /freqtrade/user_data/config.json `
+        --config /freqtrade/user_data/config/research-universe.json `
+        --strategy RegimeRiskStrategy `
+        --strategy-path /freqtrade/user_data/strategies `
+        --timeframe 1h `
+        --timerange $period.Range
+    if ($LASTEXITCODE -ne 0) {
+        throw "Expanded-universe $($period.Name) backtest failed."
+    }
+    $latest = Get-ChildItem -LiteralPath $resultPath -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    Copy-Item -LiteralPath $latest.FullName -Destination (Join-Path $resultPath "expanded_universe_$($period.Name).zip") -Force
+}

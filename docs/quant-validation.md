@@ -139,3 +139,87 @@ The baseline custom exit was supplemented with a time stop that closes a positio
 ### Decision
 
 Neither time stop improves the strategy; the 24-hour condition worsens development drawdown and the 48-hour condition produces no meaningful out-of-sample change. This exit branch is closed. The next research phase should add a genuinely independent data source or a different strategy family, rather than continuing to tune filters around the same EMA/RSI/MACD signal.
+
+## Experiment 006 — 1H pullback within 4H trend
+
+This experiment tests a separate entry hypothesis. Within the same 4H bullish regime, a position is opened only after price pulls back below the 1H EMA 20 while remaining above EMA 50, RSI is 35–50, and the MACD histogram begins to recover. The unchanged ATR-based risk and exit model make the entry rule the only variable under test.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 132 | -13.09% | 0.72 | -0.99 USDT | 14.41% |
+| Validation | 8 | -1.57% | 0.56 | -1.97 USDT | 3.54% |
+| Out-of-sample | 38 | -5.34% | 0.60 | -1.40 USDT | 9.07% |
+
+### Decision
+
+The pullback hypothesis is rejected. It increases sample size versus the sparse breakout composite, but it is negative in all three periods and exceeds the 5% drawdown limit in development and out-of-sample. It is retained only as reproducible research code and cannot replace the conservative paper strategy.
+
+## Experiment 007 — 1H EMA reclaim inside stronger 4H trend
+
+This continuation hypothesis requires a 4H bullish EMA 50/200 regime with ADX above 25, then enters only when a 1H candle reclaims EMA 20 while EMA 20 remains above EMA 50. RSI, MACD, and volume-average filters are deliberately omitted. This tests a lower-frequency price-trend rule rather than another variant of the prior oscillator logic.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 187 | -17.60% | 0.72 | -0.94 USDT | 19.74% |
+| Validation | 16 | -0.97% | 0.85 | -0.61 USDT | 4.77% |
+| Out-of-sample | 50 | -10.05% | 0.49 | -2.01 USDT | 12.91% |
+
+### Decision
+
+The EMA reclaim continuation hypothesis is rejected. It provides sufficient trade count in development and out-of-sample, so the negative profit factors and expectancy are meaningful rather than a sample-size artifact. It has the weakest out-of-sample result tested so far and exceeds the drawdown gate in two periods. Further tuning of this family is not justified.
+
+## Experiment 008 — range mean reversion
+
+This is a separate hypothesis from the rejected trend-following families. It enters only when 4H price is above the long-term EMA baseline but ADX is below 20, while the 1H close falls below the lower 20-period Bollinger Band with RSI below 30. Exit is at the Bollinger midpoint or RSI 55; ATR stop and all cost assumptions remain unchanged.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 60 | -11.22% | 0.46 | -1.87 USDT | 13.10% |
+| Validation | 5 | -1.56% | 0.17 | -3.12 USDT | 1.56% |
+| Out-of-sample | 18 | +1.97% | 1.72 | +1.09 USDT | 0.89% |
+
+### Decision
+
+The range mean-reversion hypothesis is rejected. Although the latest out-of-sample period is positive, it has only 18 trades and both development and validation are materially negative. The development drawdown also exceeds the 5% gate. This strategy remains research-only and cannot replace the paper strategy. The experiment demonstrates that neither the currently tested trend-following nor simple oversold-reversal family is robust across the three periods.
+
+## Experiment 009 — active strategy with trailing stop
+
+This validates the MVP trailing-stop behavior after first target: after profit reaches 1.5R, the stop follows price at one initial-risk fraction below the current rate, never below entry. The entry rules, 1.5R partial take-profit, 2.5R target, fees, and all evaluation periods are unchanged.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 174 | -28.37% | 0.50 | -1.63 USDT | 28.37% |
+| Validation | 4 | -0.10% | 0.92 | -0.24 USDT | 1.16% |
+| Out-of-sample | 44 | -3.66% | 0.75 | -0.83 USDT | 8.37% |
+
+### Decision
+
+The trailing-stop implementation is technically validated by the historical runs, which record trailing-stop exits, but it worsens the existing rejected baseline in development and remains negative out-of-sample. It is not evidence for a live promotion. It remains part of the paper MVP risk behavior while the quant research continues; any future frozen candidate must be evaluated from scratch with this exit logic.
+
+## Experiment 010 — Donchian breakout trend family
+
+This experiment tests a clean channel-breakout hypothesis rather than the oscillator-driven baseline. It enters after a 20-hour breakout only during a 4H bullish EMA regime with ADX above 25; it exits below the prior 10-hour channel low. The inherited ATR stop, partial take-profit, and trailing-stop behavior are unchanged.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 296 | -42.47% | 0.47 | -1.43 USDT | 42.47% |
+| Validation | 19 | -5.09% | 0.31 | -2.68 USDT | 5.83% |
+| Out-of-sample | 57 | -8.35% | 0.58 | -1.47 USDT | 9.45% |
+
+### Decision
+
+The Donchian breakout family is rejected. It has adequate samples in development and out-of-sample, and the consistently negative profit factors, expectancy, and drawdown make the failure decisive. Further channel-length or ADX tuning would not be justified. Across the tested momentum, pullback, mean-reversion, and breakout families, the BTC/ETH-only 1H universe has not produced a robust candidate. The next research phase must expand the data or universe under a pre-declared protocol before further strategy changes.
+
+## Experiment 011 — expanded liquid universe
+
+This experiment changes only the research universe from BTC/ETH to BTC/ETH/SOL/BNB. It uses the same 1H/4H baseline, trailing-stop implementation, fee assumptions, and max-two-position configuration. SOL and BNB historical candles were downloaded directly from Binance; the production whitelist remains BTC/ETH.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 344 | -40.70% | 0.56 | -1.18 USDT | 42.60% |
+| Validation | 17 | -0.74% | 0.87 | -0.44 USDT | 3.36% |
+| Out-of-sample | 79 | -10.37% | 0.63 | -1.31 USDT | 15.01% |
+
+### Decision
+
+The expanded universe is rejected. More liquid pairs increase sample size but do not create a positive edge: every evaluation period remains negative and development/out-of-sample drawdown is far above the gate. SOL and BNB are not promoted to paper mode. Further work must use independent, pre-declared data features or a strategy family with a documented economic hypothesis; adding pairs or tuning thresholds is closed for this baseline.
