@@ -27,10 +27,10 @@ class EntrySnapshot:
     volume_sma: float
 
 
-def classify_regime(close: float, ema50: float, ema200: float, adx: float, atr_percent: float, high_volatility_threshold: float = 0.06) -> MarketRegime:
+def classify_regime(close: float, ema50: float, ema200: float, adx: float, atr_percent: float, high_volatility_threshold: float = 0.06, trend_adx_threshold: float = 20) -> MarketRegime:
     if atr_percent >= high_volatility_threshold:
         return MarketRegime.HIGH_VOLATILITY
-    if close > ema200 and ema50 > ema200 and adx > 20:
+    if close > ema200 and ema50 > ema200 and adx > trend_adx_threshold:
         return MarketRegime.BULL
     if close < ema200 and ema50 < ema200:
         return MarketRegime.BEAR

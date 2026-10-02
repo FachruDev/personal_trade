@@ -49,6 +49,8 @@ Quant dan risk engine tetap deterministik. AI hanya mengklasifikasi konteks beri
 
 **Selesai bila:** kandidat menghasilkan positive expectancy dan profit factor di atas 1 pada validation dan out-of-sample, drawdown berada di bawah batas yang disepakati, dan tidak bergantung pada satu pair atau satu periode pasar. Nilai target final ditetapkan setelah kita melihat rentang metrik dari eksperimen; jangan dipaksakan dari awal.
 
+**Progress:** data 3 tahun telah dikumpulkan dan baseline multi-periode dicatat di `docs/quant-validation.md`. Baseline ditolak karena development dan out-of-sample masih negatif; eksperimen terkontrol pertama adalah strength filter 4H.
+
 ## Fase 2 — Audit trail dan kontrol operasional
 
 **Tujuan:** setiap keputusan dapat dijelaskan dan bot bisa dihentikan dengan aman.

@@ -19,6 +19,8 @@
     "enabled": true,
     "url": "http://api:8000/internal/freqtrade/configuration-required",
     "format": "json",
+    "allow_custom_messages": true,
+    "strategy_msg": {"event_type": "strategy_event", "message": "{msg}"},
     "status": {"event_type": "bot_status", "status": "{status}"},
     "entry": {"event_type": "entry_created", "trade_id": "{trade_id}", "pair": "{pair}", "direction": "{direction}", "stake_amount": "{stake_amount}", "enter_tag": "{enter_tag}"},
     "entry_fill": {"event_type": "entry_filled", "trade_id": "{trade_id}", "pair": "{pair}", "open_rate": "{open_rate}", "stake_amount": "{stake_amount}", "enter_tag": "{enter_tag}"},

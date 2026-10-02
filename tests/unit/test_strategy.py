@@ -3,6 +3,7 @@ from trading_core.strategy import EntrySnapshot, MarketRegime, Signal, classify_
 
 def test_bull_regime_requires_trend_and_adx() -> None:
     assert classify_regime(110, 105, 100, 25, 0.02) is MarketRegime.BULL
+    assert classify_regime(110, 105, 100, 25, 0.02, trend_adx_threshold=25) is MarketRegime.SIDEWAYS
     assert classify_regime(110, 105, 100, 25, 0.07) is MarketRegime.HIGH_VOLATILITY
     assert classify_regime(90, 95, 100, 25, 0.02) is MarketRegime.BEAR
 
