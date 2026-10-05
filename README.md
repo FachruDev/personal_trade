@@ -61,7 +61,7 @@ Provider or malformed-response failures are recorded as audit events and do not 
 
 `GET /v1/context/orderbook/coverage` reports how much history is available. The default research gate is 8,064 snapshots (four weeks at five-minute cadence) with at least 95% cadence coverage; until then the series is collecting data and is not evidence for a strategy change.
 
-The scheduler preserves the previous collection cadence after an API restart, and coverage counts distinct five-minute buckets rather than restart duplicates.
+The schedulers preserve the previous collection cadence after an API restart, and order-book coverage counts distinct five-minute buckets rather than restart duplicates. A one-hour-or-longer order-book outage starts a new collection segment for research readiness while preserving older raw snapshots for audit.
 
 After that gate, `GET /v1/research/orderbook/forward-returns?pair=BTCUSDT&horizon_minutes=60` evaluates only the pre-declared 60-minute or 240-minute horizons and the three pre-declared imbalance buckets: bid-heavy, neutral, and ask-heavy. It is a research report only and never reaches Freqtrade.
 
@@ -75,7 +75,11 @@ After setting `NEWS_API_KEY`, refresh the NewsAPI headline collector through `PO
 
 ## Binance market status
 
-`GET /v1/market/binance/status` checks the public Binance endpoint for BTCUSDT and ETHUSDT and caches the result for one minute. It uses no exchange credential and is shown on the operator dashboard so the paper bot's pair availability is visible.
+`GET /v1/market/binance/status` checks the public Binance endpoint for BTCUSDT and ETHUSDT, plus Binance server time, and caches the result for one minute. It uses no exchange credential and is shown on the operator dashboard so pair availability and local clock drift are visible. Drift above two seconds is shown as a warning; synchronize the host clock before a release.
+
+## Paper-run continuity
+
+`GET /v1/paper-run` reports persisted Freqtrade-health heartbeats for the paper environment. The API records a heartbeat every 15 minutes by default and starts a new continuity segment after a 30-minute gap. The release dashboard requires a complete 56-day segment; a restart alone does not reset the record, while an actual monitoring gap remains visible as an interruption.
 
 ## Data retention
 

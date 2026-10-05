@@ -18,11 +18,14 @@ Set these deployment-only values in `.env`:
 TRADING_ENVIRONMENT=live
 FREQTRADE_PROFILE_CONFIG=/freqtrade/user_data/config/profiles/live.local.json
 FREQTRADE_STRATEGY=LimitedRiskRegimeRiskStrategy
+FREQTRADE_STRATEGY_SOURCE_FILE=/freqtrade/user_data/strategies/RegimeRiskStrategy.py
+LIVE_RELEASE_APPROVAL_FILE=/freqtrade/user_data/config/profiles/live-release-approval.local.json
+LIVE_QUANT_REPORT_FILE=/freqtrade/user_data/docs/quant-reports/frozen-candidate.json
 ```
 
-Fill the dedicated Binance key and secret, then verify the local control token, Freqtrade API password, and JWT secret are not placeholders. Do not copy these values into documentation, terminal history, or source control.
+`LIVE_QUANT_REPORT_FILE` must point to the immutable JSON produced by `evaluate-backtest-gates.ps1` for the frozen candidate. Its `passes` value must be `true`, and the report SHA-256 must match `quant_report_sha256` in the approval record. `FREQTRADE_STRATEGY_SOURCE_FILE` must point to the exact reviewed source and its SHA-256 must match `strategy_source_sha256`. Fill the dedicated Binance key and secret, then verify the local control token, Freqtrade API password, and JWT secret are not placeholders. Do not copy these values into documentation, terminal history, or source control.
 
-Run the preflight. It must pass before the service is started:
+Run the preflight. It must pass before the service is started. The live check also compares the host clock with Binance server time and rejects drift above two seconds. Compose repeats this check inside the Freqtrade container at live startup, so bypassing the local preflight cannot bypass the clock gate:
 
 ```powershell
 .\scripts\preflight-release.ps1 -Mode live

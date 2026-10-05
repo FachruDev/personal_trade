@@ -223,3 +223,43 @@ This experiment changes only the research universe from BTC/ETH to BTC/ETH/SOL/B
 ### Decision
 
 The expanded universe is rejected. More liquid pairs increase sample size but do not create a positive edge: every evaluation period remains negative and development/out-of-sample drawdown is far above the gate. SOL and BNB are not promoted to paper mode. Further work must use independent, pre-declared data features or a strategy family with a documented economic hypothesis; adding pairs or tuning thresholds is closed for this baseline.
+
+## Experiment 012 — trend pullback recovery
+
+This pre-declared research-only hypothesis tests a stochastic/RSI recovery after
+a shallow 1H pullback, constrained to a healthy 4H uptrend. It differs from
+Experiment 006 by requiring a stochastic crossover below 50 and an RSI cross
+back above 40, instead of a MACD-histogram recovery. The pair universe,
+timeframes, ATR risk model, fees, exits, and three fixed periods remain
+unchanged.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 4 | -1.26% | 0.26 | -3.1385 | 1.27% |
+| Validation | 0 | 0.00% | 0.00 | 0.0000 | 0.00% |
+| Out-of-sample | 1 | +0.50% | 0.00 | +4.9934 | 0.00% |
+
+### Decision
+
+The gate report in `docs/quant-reports/trend_pullback_recovery.json` rejects
+this candidate. It misses the minimum 30 trades in every period, has negative
+development expectancy, and cannot establish a profit factor in validation or
+out-of-sample. It is not eligible for paper promotion. No parameter search or
+post-result adjustment will be run against this family.
+
+## Indicator-integrity correction
+
+Freqtrade look-ahead analysis on `RegimeRiskStrategy` found no biased entry,
+exit, or indicator signal. Recursive analysis also found no recursive or
+indicator-only look-ahead bias, but showed the 4H EMA 200 could differ by
+0.592% when calculated from the old 220-hour warm-up window. The strategy now
+uses 1,000 one-hour startup candles, which supplies 250 informative 4H candles
+before signal evaluation. Historical performance must be regenerated with this
+unchanged signal logic before any candidate can be frozen; the prior negative
+results remain disqualifying and cannot be replaced by this technical fix.
+
+The regenerated `regime_warmup1000` gate report confirms that conclusion:
+development has 168 trades, -26.32% return, 0.53 profit factor, and 26.69%
+drawdown; validation has only five trades; out-of-sample has 43 trades, -3.40%
+return, 0.76 profit factor, and 8.37% drawdown. The revision is technically
+sound but remains ineligible for live promotion.

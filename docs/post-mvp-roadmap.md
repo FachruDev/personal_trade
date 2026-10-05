@@ -83,6 +83,8 @@ Quant dan risk engine tetap deterministik. AI hanya mengklasifikasi konteks beri
 
 **Protokol evaluasi:** setelah gate tercapai, evaluator hanya membandingkan return forward 60 menit dan 240 menit pada tiga bucket yang sudah ditetapkan (`bid_heavy`, `neutral`, `ask_heavy`). Bucket dan horizon tidak dapat diubah melalui endpoint, untuk mencegah parameter shopping saat data yang sama sedang dievaluasi.
 
+**Kontinuitas data:** outage lebih dari satu jam memulai segmen pengumpulan baru untuk readiness research. Snapshot mentah sebelum outage tidak dihapus; pemisahan ini mencegah gap operasional menutupi kualitas empat minggu pengamatan yang baru dan kontinu.
+
 ## Fase 4 — News pipeline dan AI dalam shadow mode
 
 **Tujuan:** menguji nilai tambah AI tanpa memberi pengaruh terhadap order.
@@ -147,6 +149,7 @@ Contoh output yang dibatasi:
 3. Uji restart container, kegagalan Redis/PostgreSQL, kegagalan provider data, API rate limit, network interruption, dan kill-switch.
 4. Pantau drawdown, protection trigger, keputusan HOLD, serta perbedaan antara AI shadow dan keputusan quant.
 5. Tetapkan release checklist dengan owner yang menyetujui perubahan strategi/configuration.
+6. Jalankan `validate-strategy-integrity.ps1` pada revision strategi yang dibekukan untuk memastikan tidak ada look-ahead bias atau indikator yang berubah ketika startup candle diperbesar.
 
 **Selesai bila:** tidak ada order nyata, semua kejadian operasional pulih atau masuk kondisi aman, audit lengkap, dan hasil dry-run sejalan dengan batas risiko yang telah disetujui.
 

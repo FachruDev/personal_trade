@@ -25,7 +25,10 @@ class RegimeRiskStrategy(IStrategy):
     INTERFACE_VERSION = 3
     timeframe = "1h"
     can_short = False
-    startup_candle_count = 220
+    # EMA 200 on the informative 4H timeframe needs more than the nominal
+    # 200 candles before its value is stable. 1,000 one-hour candles supply
+    # 250 four-hour observations plus a small buffer.
+    startup_candle_count = 1000
     process_only_new_candles = True
     use_custom_stoploss = True
     position_adjustment_enable = True

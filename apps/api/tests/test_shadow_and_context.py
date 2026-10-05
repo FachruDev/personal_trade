@@ -2,10 +2,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
 from trading_api.ai_shadow import ShadowAnalysisRequest, parse_assessment, user_prompt
 from trading_api.market_context import classify_global_regime, number
 from trading_api.news import NewsHeadline, deduplicate_headlines, normalized_title, parse_newsapi_timestamp
-from trading_api.binance_market import WATCHED_SYMBOLS, orderbook_metrics
+from trading_api.binance_market import WATCHED_SYMBOLS, clock_drift_seconds, orderbook_metrics
 from trading_api.context_fusion import recommend_context_risk
 from trading_api import main as api_main
 
@@ -25,6 +27,13 @@ class GlobalMarketContextTests(unittest.TestCase):
 
     def test_binance_watchlist_matches_the_supported_pair_scope(self) -> None:
         self.assertEqual(WATCHED_SYMBOLS, ("BTCUSDT", "ETHUSDT"))
+
+    def test_clock_drift_uses_binance_milliseconds_and_rejects_invalid_time(self) -> None:
+        observed_at = datetime(2026, 10, 5, 1, 0, 1, 250_000, tzinfo=timezone.utc)
+        server_time_ms = int(observed_at.timestamp() * 1_000) - 1_250
+        self.assertEqual(clock_drift_seconds(server_time_ms, observed_at), 1.25)
+        with self.assertRaises(ValueError):
+            clock_drift_seconds("invalid", observed_at)
 
     def test_orderbook_metrics_calculate_imbalance_and_spread(self) -> None:
         result = orderbook_metrics(
@@ -68,6 +77,42 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=45), 300, now), 255.0)
         self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=301), 300, now), 0.0)
 
+    def test_global_scheduler_uses_the_same_restart_delay_rule(self) -> None:
+        now = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
+        self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=120), 900, now), 780.0)
+
+    def test_release_readiness_keeps_unproven_quant_and_paper_gates_blocked(self) -> None:
+        checks = api_main.release_readiness_checks(
+            {"freqtrade_reachable": True, "kill_switch_enabled": False},
+            {"reachable": True, "clock_synchronized": True},
+            {"status": "collecting"},
+        )
+        by_key = {check["key"]: check for check in checks}
+        self.assertFalse(by_key["quant_validation"]["passed"])
+        self.assertFalse(by_key["eight_week_paper_run"]["passed"])
+        self.assertTrue(by_key["execution_engine"]["passed"])
+        self.assertTrue(by_key["clock_synchronized"]["passed"])
+
+    def test_paper_run_requires_duration_and_detects_interruption(self) -> None:
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        ready_at = start + timedelta(days=56)
+        self.assertEqual(api_main.paper_run_status(1, start, start, start), "collecting")
+        self.assertEqual(api_main.paper_run_status(100, start, ready_at, ready_at), "ready_for_release_evidence")
+        self.assertEqual(
+            api_main.paper_run_status(100, start, start, start + timedelta(seconds=1801)), "interrupted"
+        )
+
+    def test_orderbook_coverage_restarts_after_a_major_outage_without_deleting_history(self) -> None:
+        start = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
+        observations = [
+            (start, start),
+            (start + timedelta(minutes=5), start + timedelta(minutes=5)),
+            (start + timedelta(days=3), start + timedelta(days=3)),
+            (start + timedelta(days=3, minutes=5), start + timedelta(days=3, minutes=5)),
+        ]
+        segment = api_main.latest_continuous_orderbook_segment(observations, 3600)
+        self.assertEqual(segment, observations[-2:])
+
     def test_orderbook_forward_return_summary_uses_predeclared_buckets(self) -> None:
         summary = api_main.summarize_forward_returns([(0.2, 0.01), (0.0, -0.01), (-0.2, 0.02)])
         self.assertEqual(summary["bid_heavy"]["samples"], 1)
@@ -102,6 +147,31 @@ class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
             "orderbook_context_refresh_failed",
             {"source": "binance", "detail": "invalid order book"},
         )
+
+    async def test_binance_connectivity_failure_returns_safe_market_status(self) -> None:
+        class EmptyRedis:
+            async def get(self, key: str) -> None:
+                return None
+
+            async def set(self, key: str, value: str, ex: int) -> None:
+                self.key = key
+                self.value = value
+                self.ex = ex
+
+        redis = EmptyRedis()
+        with (
+            patch.object(api_main.app.state, "redis", redis, create=True),
+            patch.object(api_main, "fetch_market_connectivity", new=AsyncMock(side_effect=httpx.ConnectError("offline"))),
+            patch.object(api_main, "record_event", new=AsyncMock()) as record_event,
+        ):
+            result = await api_main.binance_market_status()
+
+        self.assertFalse(result["reachable"])
+        self.assertFalse(result["clock_synchronized"])
+        self.assertEqual(result["pairs"], {})
+        self.assertEqual(redis.key, "market:binance-connectivity")
+        self.assertEqual(redis.ex, 60)
+        record_event.assert_awaited_once()
 
 
 class ShadowAssessmentTests(unittest.TestCase):

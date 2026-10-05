@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     global_shadow_refresh_seconds: int = 900
     orderbook_shadow_refresh_seconds: int = 300
     orderbook_shadow_min_observations: int = 8064
+    orderbook_shadow_continuity_gap_seconds: int = 3600
+    paper_run_heartbeat_seconds: int = 900
+    paper_run_continuity_gap_seconds: int = 1800
+    paper_run_required_days: int = 56
     binance_public_base_url: str = "https://api.binance.com"
     audit_retention_days: int = 180
     context_retention_days: int = 365

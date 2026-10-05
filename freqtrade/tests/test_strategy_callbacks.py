@@ -31,6 +31,9 @@ class FakeResponse:
 
 
 class TrailingStopCallbackTests(unittest.TestCase):
+    def test_startup_window_covers_the_informative_ema_200(self) -> None:
+        self.assertGreaterEqual(RegimeRiskStrategy.startup_candle_count, 1_000)
+
     def test_trailing_stop_starts_after_first_reward_target(self) -> None:
         strategy = RegimeRiskStrategy.__new__(RegimeRiskStrategy)
         strategy._send_audit_event = lambda *args, **kwargs: None

@@ -10,7 +10,8 @@ type GlobalContext = { status: string; observed_at?: string; context?: { regime?
 type OrderBookContext = { status: string; observed_at?: string; context?: { pairs?: Record<string, { mid_price?: number | null; imbalance?: number | null; spread_bps?: number | null; bid_levels?: number; ask_levels?: number }> } };
 type OrderBookCoverage = { status: string; observations: number; minimum_observations: number; coverage_ratio?: number | null; first_observed_at?: string | null; last_observed_at?: string | null };
 type NewsHeadlines = { mode: string; headlines: Array<{ title: string; source: string; url: string; published_at?: string | null }> };
-type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; detail?: string };
+type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; clock_drift_seconds?: number; clock_synchronized?: boolean; detail?: string };
+type ReleaseReadiness = { ready: boolean; environment: string; checks: Array<{ key: string; passed: boolean; detail: string }>; paper_run?: { status: string; observations: number; expected_observations: number; coverage_ratio?: number | null; required_days: number; first_observed_at?: string | null } };
 type MacroContext = { status: string; observed_at?: string; context?: { series?: Record<string, { value?: number | null; date?: string | null }> } };
 type AiShadow = { status: string; observed_at?: string; assessment?: { market_bias: string; confidence: number; risk_level: string; trade_support: boolean; event_summary: string; provider: string; model: string; input_source?: string } };
 type ContextFusion = { recommendation: { decision: string; risk_multiplier: number; reasons: string[]; mode: string }; inputs_available: { global_market: boolean; macro: boolean; ai: boolean } };
@@ -22,6 +23,7 @@ type DashboardState = {
   performance: BotPerformance | null;
   news: NewsHeadlines | null;
   binanceMarket: BinanceMarket | null;
+  releaseReadiness: ReleaseReadiness | null;
   globalContext: GlobalContext | null;
   orderBookContext: OrderBookContext | null;
   orderBookCoverage: OrderBookCoverage | null;
@@ -33,7 +35,7 @@ type DashboardState = {
   updatedAt: Date | null;
 };
 
-const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, macroContext: null, aiShadow: null, contextFusion: null, decisions: [], error: null, updatedAt: null };
+const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, releaseReadiness: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, macroContext: null, aiShadow: null, contextFusion: null, decisions: [], error: null, updatedAt: null };
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
@@ -52,13 +54,14 @@ export default function Home() {
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, macroResponse, aiShadowResponse, fusionResponse, decisionsResponse] = await Promise.all([
+      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, releaseReadinessResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, macroResponse, aiShadowResponse, fusionResponse, decisionsResponse] = await Promise.all([
         fetch("/api/trading/health", { cache: "no-store" }),
         fetch("/api/trading/v1/bot/status", { cache: "no-store" }),
         fetch("/api/trading/v1/operational-state", { cache: "no-store" }),
         fetch("/api/trading/v1/bot/performance", { cache: "no-store" }),
         fetch("/api/trading/v1/news/headlines", { cache: "no-store" }),
         fetch("/api/trading/v1/market/binance/status", { cache: "no-store" }),
+        fetch("/api/trading/v1/release/readiness", { cache: "no-store" }),
         fetch("/api/trading/v1/context/global", { cache: "no-store" }),
         fetch("/api/trading/v1/context/orderbook", { cache: "no-store" }),
         fetch("/api/trading/v1/context/orderbook/coverage", { cache: "no-store" }),
@@ -67,16 +70,17 @@ export default function Home() {
         fetch("/api/trading/v1/context/fusion", { cache: "no-store" }),
         fetch("/api/trading/v1/decisions", { cache: "no-store" }),
       ]);
-      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !macroResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !decisionsResponse.ok) {
+      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !releaseReadinessResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !macroResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !decisionsResponse.ok) {
         throw new Error("Dashboard belum dapat mengambil data dari control API.");
       }
-      const [health, bot, operations, performance, news, binanceMarket, globalContext, orderBookContext, orderBookCoverage, macroContext, aiShadow, contextFusion, decisions] = (await Promise.all([
+      const [health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, macroContext, aiShadow, contextFusion, decisions] = (await Promise.all([
         healthResponse.json(),
         botResponse.json(),
         operationsResponse.json(),
         performanceResponse.json(),
         newsResponse.json(),
         binanceMarketResponse.json(),
+        releaseReadinessResponse.json(),
         contextResponse.json(),
         orderBookResponse.json(),
         orderBookCoverageResponse.json(),
@@ -84,8 +88,8 @@ export default function Home() {
         aiShadowResponse.json(),
         fusionResponse.json(),
         decisionsResponse.json(),
-      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, GlobalContext, OrderBookContext, OrderBookCoverage, MacroContext, AiShadow, ContextFusion, Decision[]];
-      setState({ health, bot, operations, performance, news, binanceMarket, globalContext, orderBookContext, orderBookCoverage, macroContext, aiShadow, contextFusion, decisions, error: null, updatedAt: new Date() });
+      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, ReleaseReadiness, GlobalContext, OrderBookContext, OrderBookCoverage, MacroContext, AiShadow, ContextFusion, Decision[]];
+      setState({ health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, macroContext, aiShadow, contextFusion, decisions, error: null, updatedAt: new Date() });
     } catch {
       setState((current) => ({
         ...current,
@@ -130,9 +134,21 @@ export default function Home() {
       <section className="status-grid" aria-label="Ringkasan kondisi bot">
         <StatusCard label="Control API" value={connected ? "Terhubung" : "Memuat"} detail="PostgreSQL dan Redis diperiksa oleh health check." active={connected} />
         <StatusCard label="Freqtrade" value={botState(state.bot)} detail="Execution engine Binance Spot." active={state.operations?.freqtrade_reachable === true} />
-        <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true} />
+        <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"} · Jam ${state.binanceMarket.clock_drift_seconds == null ? "—" : `${state.binanceMarket.clock_drift_seconds.toFixed(2)} dtk`}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true && state.binanceMarket?.clock_synchronized !== false} />
         <StatusCard label="Pasangan awal" value="BTC / ETH" detail="BTC/USDT dan ETH/USDT, signal 1H dan regime 4H." />
         <StatusCard label="Kill-switch" value={state.operations?.kill_switch_enabled ? "Aktif" : "Siap"} detail={state.operations?.kill_switch_enabled ? "Entry baru diblokir oleh API." : "Tidak ada blokir entry aktif."} active={!state.operations?.kill_switch_enabled} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">Release gate</p><h2>Kesiapan go-live</h2></div>
+          <span className="event-count">{state.releaseReadiness?.ready ? "Siap" : "Belum siap"}</span>
+        </div>
+        <p className="subheading">Status ini hanya menjadi siap bila setiap bukti rilis telah terpenuhi. Paper mode dan container sehat saja belum cukup.</p>
+        <ul className="check-list">
+          {(state.releaseReadiness?.checks ?? []).map((check) => <li key={check.key}>{check.passed ? "✓" : "○"} {check.detail}</li>)}
+        </ul>
+        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {state.releaseReadiness.paper_run.status.replaceAll("_", " ")} · target {state.releaseReadiness.paper_run.required_days} hari{state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}% lengkap`}</p> : null}
       </section>
 
       <section className="content-grid">

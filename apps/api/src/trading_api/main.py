@@ -37,12 +37,15 @@ async def lifespan(app: FastAPI):
         await connection.execute(CREATE_NEWS_TABLE)
     app.state.global_shadow_refresh_task = None
     app.state.orderbook_shadow_refresh_task = None
+    app.state.paper_run_heartbeat_task = None
     if settings.global_shadow_refresh_seconds > 0:
         app.state.global_shadow_refresh_task = asyncio.create_task(global_shadow_refresh_loop())
     if settings.orderbook_shadow_refresh_seconds > 0:
         app.state.orderbook_shadow_refresh_task = asyncio.create_task(orderbook_shadow_refresh_loop())
+    if settings.trading_environment == "paper" and settings.paper_run_heartbeat_seconds > 0:
+        app.state.paper_run_heartbeat_task = asyncio.create_task(paper_run_heartbeat_loop())
     yield
-    for task in (app.state.global_shadow_refresh_task, app.state.orderbook_shadow_refresh_task):
+    for task in (app.state.global_shadow_refresh_task, app.state.orderbook_shadow_refresh_task, app.state.paper_run_heartbeat_task):
         if task is None:
             continue
         task.cancel()
@@ -73,6 +76,15 @@ async def refresh_global_context_from_provider() -> dict:
 
 
 async def global_shadow_refresh_loop() -> None:
+    latest = await latest_global_context()
+    last_observed_at = latest["observed_at"] if latest else None
+    delay = next_shadow_refresh_delay(
+        last_observed_at,
+        settings.global_shadow_refresh_seconds,
+        datetime.now(timezone.utc),
+    )
+    if delay:
+        await asyncio.sleep(delay)
     while True:
         try:
             await refresh_global_context_from_provider()
@@ -122,6 +134,34 @@ async def orderbook_shadow_refresh_loop() -> None:
         await asyncio.sleep(settings.orderbook_shadow_refresh_seconds)
 
 
+async def latest_paper_run_heartbeat() -> datetime | None:
+    async with app.state.database.acquire() as connection:
+        return await connection.fetchval(
+            "SELECT MAX(created_at) FROM bot_audit_events WHERE event_type = 'paper_run_heartbeat'"
+        )
+
+
+async def paper_run_heartbeat_loop() -> None:
+    last_heartbeat = await latest_paper_run_heartbeat()
+    delay = next_shadow_refresh_delay(
+        last_heartbeat,
+        settings.paper_run_heartbeat_seconds,
+        datetime.now(timezone.utc),
+    )
+    if delay:
+        await asyncio.sleep(delay)
+    while True:
+        try:
+            bot = await bot_status()
+            if bot["freqtrade"] != "unavailable":
+                await record_event("paper_run_heartbeat", {"source": "api", "mode": "paper"})
+        except Exception:
+            # A missing heartbeat is deliberately left as evidence of an
+            # interruption. It must never affect execution.
+            pass
+        await asyncio.sleep(settings.paper_run_heartbeat_seconds)
+
+
 async def latest_global_context() -> dict | None:
     async with app.state.database.acquire() as connection:
         row = await connection.fetchrow(
@@ -158,15 +198,20 @@ def orderbook_coverage_status(observations: int, coverage_ratio: float | None) -
 
 async def orderbook_coverage() -> dict:
     async with app.state.database.acquire() as connection:
-        row = await connection.fetchrow(
-            "SELECT COUNT(DISTINCT date_bin(($1::int * INTERVAL '1 second'), observed_at, TIMESTAMPTZ '2000-01-01')) AS observations, "
-            "MIN(observed_at) AS first_observed_at, MAX(observed_at) AS last_observed_at "
-            "FROM market_context_snapshots WHERE source = 'binance' AND context_type = 'orderbook'",
+        rows = await connection.fetch(
+            "SELECT date_bin(($1::int * INTERVAL '1 second'), observed_at, TIMESTAMPTZ '2000-01-01') AS bucket, "
+            "MIN(observed_at) AS observed_at "
+            "FROM market_context_snapshots WHERE source = 'binance' AND context_type = 'orderbook' "
+            "GROUP BY bucket ORDER BY bucket ASC",
             settings.orderbook_shadow_refresh_seconds,
         )
-    observations = int(row["observations"])
-    first_observed_at = row["first_observed_at"]
-    last_observed_at = row["last_observed_at"]
+    segment = latest_continuous_orderbook_segment(
+        [(row["bucket"], row["observed_at"]) for row in rows],
+        settings.orderbook_shadow_continuity_gap_seconds,
+    )
+    observations = len(segment)
+    first_observed_at = segment[0][1] if segment else None
+    last_observed_at = segment[-1][1] if segment else None
     coverage_ratio: float | None = None
     if observations and first_observed_at and last_observed_at:
         elapsed_seconds = max((last_observed_at - first_observed_at).total_seconds(), 0)
@@ -180,6 +225,20 @@ async def orderbook_coverage() -> dict:
         "first_observed_at": first_observed_at,
         "last_observed_at": last_observed_at,
     }
+
+
+def latest_continuous_orderbook_segment(
+    observations: list[tuple[datetime, datetime]], max_gap_seconds: int
+) -> list[tuple[datetime, datetime]]:
+    """Keep raw history but evaluate only the series after the last outage."""
+    segment: list[tuple[datetime, datetime]] = []
+    previous_bucket: datetime | None = None
+    for bucket, observed_at in observations:
+        if previous_bucket is not None and (bucket - previous_bucket).total_seconds() > max_gap_seconds:
+            segment = []
+        segment.append((bucket, observed_at))
+        previous_bucket = bucket
+    return segment
 
 
 def summarize_forward_returns(samples: list[tuple[float, float]]) -> dict[str, dict[str, float | int | None]]:
@@ -406,6 +465,105 @@ async def operational_state() -> dict:
     }
 
 
+def paper_run_status(
+    observations: int, first_observed_at: datetime | None, last_observed_at: datetime | None, now: datetime
+) -> str:
+    if observations == 0 or first_observed_at is None or last_observed_at is None:
+        return "not_started"
+    if (now - last_observed_at).total_seconds() > settings.paper_run_continuity_gap_seconds:
+        return "interrupted"
+    if (now - first_observed_at).total_seconds() < settings.paper_run_required_days * 86_400:
+        return "collecting"
+    return "ready_for_release_evidence"
+
+
+async def paper_run_summary() -> dict:
+    async with app.state.database.acquire() as connection:
+        rows = await connection.fetch(
+            "SELECT created_at FROM bot_audit_events WHERE event_type = 'paper_run_heartbeat' ORDER BY created_at ASC"
+        )
+    now = datetime.now(timezone.utc)
+    segment: list[datetime] = []
+    previous: datetime | None = None
+    for row in rows:
+        observed_at = row["created_at"]
+        if previous is not None and (observed_at - previous).total_seconds() > settings.paper_run_continuity_gap_seconds:
+            segment = []
+        segment.append(observed_at)
+        previous = observed_at
+    first_observed_at = segment[0] if segment else None
+    last_observed_at = segment[-1] if segment else None
+    duration_seconds = max((now - first_observed_at).total_seconds(), 0) if first_observed_at else 0
+    expected_observations = int(duration_seconds // settings.paper_run_heartbeat_seconds) + 1 if first_observed_at else 0
+    coverage_ratio = min(len(segment) / expected_observations, 1.0) if expected_observations else None
+    return {
+        "status": paper_run_status(len(segment), first_observed_at, last_observed_at, now),
+        "observations": len(segment),
+        "expected_observations": expected_observations,
+        "coverage_ratio": coverage_ratio,
+        "required_days": settings.paper_run_required_days,
+        "first_observed_at": first_observed_at,
+        "last_observed_at": last_observed_at,
+    }
+
+
+def release_readiness_checks(operations: dict, market: dict, paper_run: dict) -> list[dict[str, str | bool]]:
+    """Expose only evidence-backed release checks; missing proof stays blocked."""
+    return [
+        {
+            "key": "quant_validation",
+            "passed": False,
+            "detail": "Current strategy has not passed the frozen quant gate.",
+        },
+        {
+            "key": "eight_week_paper_run",
+            "passed": paper_run.get("status") == "ready_for_release_evidence",
+            "detail": (
+                "Eight uninterrupted weeks are recorded."
+                if paper_run.get("status") == "ready_for_release_evidence"
+                else "Eight uninterrupted weeks with a frozen qualified strategy are not yet recorded."
+            ),
+        },
+        {
+            "key": "execution_engine",
+            "passed": bool(operations.get("freqtrade_reachable")),
+            "detail": "Freqtrade control API is reachable." if operations.get("freqtrade_reachable") else "Freqtrade control API is unavailable.",
+        },
+        {
+            "key": "kill_switch_ready",
+            "passed": operations.get("kill_switch_enabled") is False,
+            "detail": "Kill-switch is ready." if operations.get("kill_switch_enabled") is False else "Kill-switch state blocks new entries.",
+        },
+        {
+            "key": "binance_market",
+            "passed": bool(market.get("reachable")),
+            "detail": "BTCUSDT and ETHUSDT are tradable." if market.get("reachable") else "Binance market status is unavailable.",
+        },
+        {
+            "key": "clock_synchronized",
+            "passed": market.get("clock_synchronized") is True,
+            "detail": "Host clock is synchronized with Binance." if market.get("clock_synchronized") is True else "Host clock must be synchronized with Binance.",
+        },
+    ]
+
+
+@app.get("/v1/release/readiness")
+async def release_readiness() -> dict:
+    operations, market, paper_run = await asyncio.gather(operational_state(), binance_market_status(), paper_run_summary())
+    checks = release_readiness_checks(operations, market, paper_run)
+    return {
+        "ready": all(bool(check["passed"]) for check in checks),
+        "environment": settings.trading_environment,
+        "checks": checks,
+        "paper_run": paper_run,
+    }
+
+
+@app.get("/v1/paper-run")
+async def paper_run() -> dict:
+    return await paper_run_summary()
+
+
 @app.get("/v1/market/binance/status")
 async def binance_market_status() -> dict:
     cache_key = "market:binance-connectivity"
@@ -419,6 +577,7 @@ async def binance_market_status() -> dict:
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "reachable": False,
             "pairs": {},
+            "clock_synchronized": False,
             "detail": "Binance public market data unavailable",
         }
         await record_event("binance_market_connectivity_failed", {"detail": str(exc)})

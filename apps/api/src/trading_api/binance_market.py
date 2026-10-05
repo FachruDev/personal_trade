@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -30,6 +31,14 @@ def positive_number(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if isfinite(parsed) and parsed > 0 else None
+
+
+def clock_drift_seconds(server_time_ms: object, observed_at: datetime) -> float:
+    """Return the absolute local-vs-Binance clock difference at observation time."""
+    server_time = positive_number(server_time_ms)
+    if server_time is None:
+        raise ValueError("Binance server time is missing or invalid")
+    return abs(observed_at.timestamp() - (server_time / 1_000))
 
 
 def orderbook_metrics(snapshot: dict, levels: int = 10) -> dict[str, float | int | None]:
@@ -74,21 +83,29 @@ def orderbook_metrics(snapshot: dict, levels: int = 10) -> dict[str, float | int
 
 async def fetch_market_connectivity(base_url: str) -> dict:
     async with httpx.AsyncClient(timeout=8) as client:
-        response = await client.get(
-            f"{base_url.rstrip('/')}/api/v3/exchangeInfo",
-            params={"symbols": json.dumps(WATCHED_SYMBOLS, separators=(",", ":"))},
+        response, time_response = await asyncio.gather(
+            client.get(
+                f"{base_url.rstrip('/')}/api/v3/exchangeInfo",
+                params={"symbols": json.dumps(WATCHED_SYMBOLS, separators=(",", ":"))},
+            ),
+            client.get(f"{base_url.rstrip('/')}/api/v3/time"),
         )
         response.raise_for_status()
+        time_response.raise_for_status()
     symbols = {
         str(item.get("symbol")): str(item.get("status"))
         for item in response.json().get("symbols", [])
         if isinstance(item, dict)
     }
     pairs = {symbol: symbols.get(symbol, "MISSING") for symbol in WATCHED_SYMBOLS}
+    observed_at = datetime.now(timezone.utc)
+    drift_seconds = clock_drift_seconds(time_response.json().get("serverTime"), observed_at)
     return {
-        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "observed_at": observed_at.isoformat(),
         "reachable": all(status == "TRADING" for status in pairs.values()),
         "pairs": pairs,
+        "clock_drift_seconds": round(drift_seconds, 3),
+        "clock_synchronized": drift_seconds <= 2.0,
     }
 
 

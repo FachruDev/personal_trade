@@ -68,7 +68,9 @@ services:
       if [ "$$TRADING_ENVIRONMENT" = "live" ]; then
       python /freqtrade/user_data/scripts/validate_live_release.py
       "$${FREQTRADE_PROFILE_CONFIG:-/freqtrade/user_data/config/profiles/live.local.json}"
-      "$${LIVE_RELEASE_APPROVAL_FILE:-}"; fi;
+      "$${LIVE_RELEASE_APPROVAL_FILE:-}"
+      "$${LIVE_QUANT_REPORT_FILE:-}"
+      "$${FREQTRADE_STRATEGY_SOURCE_FILE:-}"; fi;
       exec freqtrade trade --config /freqtrade/user_data/config.json
       --config "$${FREQTRADE_PROFILE_CONFIG:-/freqtrade/user_data/config/profiles/paper-conservative.json}"
       --strategy "$${FREQTRADE_STRATEGY:-LimitedRiskRegimeRiskStrategy}"'

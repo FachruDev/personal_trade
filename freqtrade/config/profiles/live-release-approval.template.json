@@ -3,6 +3,7 @@
   "approved_at": "YYYY-MM-DDTHH:MM:SSZ",
   "owner": "release-owner-name",
   "strategy_revision": "immutable-git-revision",
+  "strategy_source_sha256": "sha256-of-reviewed-strategy-source",
   "quant_report_sha256": "sha256-of-passed-frozen-gate-report",
   "paper_run_end": "YYYY-MM-DDTHH:MM:SSZ"
 }

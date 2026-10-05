@@ -37,5 +37,7 @@ Scope: local Docker paper environment only. Each dependency was stopped briefly 
 | --- | --- | --- |
 | Public REST reachability | `GET /v1/market/binance/status` reached the Binance public exchange-information endpoint. | Pass |
 | Pair status | BTCUSDT and ETHUSDT both returned `TRADING`. | Pass |
+| Host clock | Freqtrade reported a 3.9-second difference from Binance during paper startup. Market status now exposes `clock_drift_seconds` and `clock_synchronized`; synchronize the Windows host clock before any release. | Open |
+| Safe API fallback | API unit test simulates a Binance connection error and verifies `reachable: false`, no tradable pairs, and `clock_synchronized: false`. | Pass |
 
 The broader paper-release checklist still requires provider failure testing and a deliberately simulated Binance-connectivity failure, as well as a qualifying frozen strategy and extended dry-run evidence.
