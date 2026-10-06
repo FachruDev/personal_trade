@@ -39,6 +39,16 @@ Evaluate a frozen candidate only after producing three separate artifacts. The c
 
 The saved report is ignored by Git under `docs/quant-reports/`; record the conclusion and essential metrics in [quant-validation.md](docs/quant-validation.md).
 
+Candidates that pass the three-period gate must then pass the fixed rolling-forward protocol. It uses five pre-registered six-month windows, applies no tuning between windows, and fails if any fold misses the same trade-count, profit-factor, expectancy, or drawdown gate.
+
+```powershell
+.\scripts\run-walk-forward-validation.ps1 `
+  -Label candidate-name `
+  -Strategy CandidateStrategy
+```
+
+The rolling-forward report is also saved under `docs/quant-reports/`. It is research evidence only and does not change the active paper strategy.
+
 ## Release profiles
 
 Validate the active paper profile before starting it:
@@ -65,6 +75,8 @@ The schedulers preserve the previous collection cadence after an API restart, an
 
 After that gate, `GET /v1/research/orderbook/forward-returns?pair=BTCUSDT&horizon_minutes=60` evaluates only the pre-declared 60-minute or 240-minute horizons and the three pre-declared imbalance buckets: bid-heavy, neutral, and ask-heavy. It is a research report only and never reaches Freqtrade.
 
+`GET /v1/research/orderbook/report` is the cockpit-oriented read-only version of the same protocol. It exposes only BTCUSDT/ETHUSDT and the pre-declared 60/240-minute horizons; before the coverage gate it returns the collection status and no evaluation.
+
 When the quant strategy identifies an entry candidate, it records the current context-fusion recommendation in that candidate's audit event. This is best-effort shadow telemetry only: unavailable context, its recommendation, and its risk multiplier never block or change an order.
 
 `GET /v1/context/macro` exposes the most recent FRED macro snapshot. Refresh it through `POST /v1/context/macro/refresh` after setting `FRED_API_KEY`; it is also audit-only.
@@ -79,7 +91,7 @@ After setting `NEWS_API_KEY`, refresh the NewsAPI headline collector through `PO
 
 ## Paper-run continuity
 
-`GET /v1/paper-run` reports persisted Freqtrade-health heartbeats for the paper environment. The API records a heartbeat every 15 minutes by default and starts a new continuity segment after a 30-minute gap. The release dashboard requires a complete 56-day segment; a restart alone does not reset the record, while an actual monitoring gap remains visible as an interruption.
+`GET /v1/paper-run` reports persisted Freqtrade-health heartbeats for the paper environment. The API records a heartbeat every 15 minutes by default and starts a new continuity segment after a 30-minute gap. Each heartbeat includes the selected strategy, profile, `PAPER_RUN_REVISION`, and SHA-256 digest of the read-only mounted strategy source. Any identity change starts a new segment. The release dashboard requires a complete 56-day segment; a restart alone does not reset the record, while an actual monitoring gap remains visible as an interruption.
 
 ## Data retention
 

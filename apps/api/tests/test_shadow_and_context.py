@@ -9,10 +9,35 @@ from trading_api.market_context import classify_global_regime, number
 from trading_api.news import NewsHeadline, deduplicate_headlines, normalized_title, parse_newsapi_timestamp
 from trading_api.binance_market import WATCHED_SYMBOLS, clock_drift_seconds, orderbook_metrics
 from trading_api.context_fusion import recommend_context_risk
+from trading_api.research import experiment_catalog
 from trading_api import main as api_main
 
 
 class GlobalMarketContextTests(unittest.TestCase):
+    def test_research_catalog_keeps_composite_strategy_research_only(self) -> None:
+        experiment = experiment_catalog()[0]
+        self.assertEqual(experiment["strategy"], "CompositeTrendPullbackStrategy")
+        self.assertEqual(experiment["status"], "rejected")
+        self.assertEqual(experiment["mode"], "research_only")
+        self.assertFalse(experiment["validation"]["result"]["passes"])
+
+    def test_orderbook_track_stays_audit_only_while_collecting(self) -> None:
+        experiment = next(item for item in experiment_catalog() if item["label"] == "orderbook_imbalance_shadow")
+        self.assertEqual(experiment["status"], "collecting_data")
+        self.assertEqual(experiment["mode"], "shadow_only")
+        self.assertIn("8,064", experiment["validation"]["gate_description"])
+        self.assertIn("No effect on orders", experiment["risk_profile"]["research"])
+    def test_decision_summary_explains_holds_by_pair_and_reason(self) -> None:
+        events = [
+            {"event_type": "hold", "created_at": "now", "payload": {"pair": "BTC/USDT", "regime": "bull", "rsi": 42, "failed_conditions": ["macd_not_bullish", "volume_below_average"]}},
+            {"event_type": "hold", "created_at": "earlier", "payload": {"pair": "ETH/USDT", "failed_conditions": ["regime_sideways", "volume_below_average"]}},
+            {"event_type": "quant_candidate", "created_at": "old", "payload": {"pair": "BTC/USDT"}},
+        ]
+        summary = api_main.summarize_decision_events(events)
+        self.assertEqual(summary["hold_reasons"][0], {"reason": "volume_below_average", "count": 2})
+        self.assertEqual(summary["latest_by_pair"]["BTC/USDT"]["event_type"], "hold")
+        self.assertEqual(summary["event_counts"]["quant_candidate"], 1)
+
     def test_regime_thresholds_are_stable(self) -> None:
         self.assertEqual(classify_global_regime(-3.0), "RISK_OFF")
         self.assertEqual(classify_global_regime(1.0), "RISK_ON")
@@ -81,6 +106,14 @@ class GlobalMarketContextTests(unittest.TestCase):
         now = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
         self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=120), 900, now), 780.0)
 
+    def test_shadow_context_freshness_marks_old_snapshots_without_discarding_them(self) -> None:
+        now = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
+        status, age = api_main.context_availability(now - timedelta(seconds=900), 900, now)
+        self.assertEqual((status, age), ("available", 900))
+        status, age = api_main.context_availability(now - timedelta(seconds=901), 900, now)
+        self.assertEqual((status, age), ("stale", 901))
+        self.assertGreaterEqual(api_main.context_stale_after_seconds("binance", "orderbook"), 900)
+
     def test_release_readiness_keeps_unproven_quant_and_paper_gates_blocked(self) -> None:
         checks = api_main.release_readiness_checks(
             {"freqtrade_reachable": True, "kill_switch_enabled": False},
@@ -102,6 +135,47 @@ class GlobalMarketContextTests(unittest.TestCase):
             api_main.paper_run_status(100, start, start, start + timedelta(seconds=1801)), "interrupted"
         )
 
+    def test_paper_run_evidence_restarts_when_the_frozen_revision_changes(self) -> None:
+        start = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
+        rows = [
+            {"created_at": start, "payload": {"strategy": "Candidate", "profile": "paper.json", "revision": "rev-a", "source_sha256": "a" * 64}},
+            {"created_at": start + timedelta(minutes=15), "payload": {"strategy": "Candidate", "profile": "paper.json", "revision": "rev-a", "source_sha256": "a" * 64}},
+            {"created_at": start + timedelta(minutes=30), "payload": {"strategy": "Candidate", "profile": "paper.json", "revision": "rev-b", "source_sha256": "b" * 64}},
+        ]
+        segment, identity = api_main.latest_continuous_paper_run_segment(rows)
+        self.assertEqual(len(segment), 1)
+        self.assertEqual(identity, ("Candidate", "paper.json", "rev-b", "b" * 64))
+
+    def test_paper_heartbeat_payload_carries_the_configured_identity(self) -> None:
+        with (
+            patch.object(api_main.settings, "freqtrade_strategy", "Candidate"),
+            patch.object(api_main.settings, "freqtrade_profile_config", "paper.json"),
+            patch.object(api_main.settings, "paper_run_revision", "rev-a"),
+            patch.object(api_main, "paper_strategy_source_sha256", return_value="a" * 64),
+        ):
+            self.assertEqual(
+                api_main.paper_run_heartbeat_payload(),
+                {"source": "api", "mode": "paper", "strategy": "Candidate", "profile": "paper.json", "revision": "rev-a", "source_sha256": "a" * 64},
+            )
+
+    def test_paper_run_evidence_restarts_when_source_changes_without_a_new_label(self) -> None:
+        start = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
+        rows = [
+            {"created_at": start, "payload": {"strategy": "Candidate", "profile": "paper.json", "revision": "rev-a", "source_sha256": "a" * 64}},
+            {"created_at": start + timedelta(minutes=15), "payload": {"strategy": "Candidate", "profile": "paper.json", "revision": "rev-a", "source_sha256": "b" * 64}},
+        ]
+        segment, identity = api_main.latest_continuous_paper_run_segment(rows)
+        self.assertEqual(len(segment), 1)
+        self.assertEqual(identity[-1] if identity else None, "b" * 64)
+
+    def test_release_readiness_rejects_an_unqualified_paper_revision(self) -> None:
+        checks = api_main.release_readiness_checks(
+            {"freqtrade_reachable": True, "kill_switch_enabled": False},
+            {"reachable": True, "clock_synchronized": True},
+            {"status": "ready_for_release_evidence", "revision": "unqualified"},
+        )
+        self.assertFalse({check["key"]: check for check in checks}["eight_week_paper_run"]["passed"])
+
     def test_orderbook_coverage_restarts_after_a_major_outage_without_deleting_history(self) -> None:
         start = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
         observations = [
@@ -122,6 +196,51 @@ class GlobalMarketContextTests(unittest.TestCase):
 
 
 class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_orderbook_report_uses_only_the_predeclared_pairs_and_horizons(self) -> None:
+        coverage = {"status": "ready_for_research", "observations": 100, "minimum_observations": 100, "coverage_ratio": 1.0}
+
+        async def samples(pair: str, horizon: int) -> list[tuple[float, float]]:
+            self.assertIn(pair, {"BTCUSDT", "ETHUSDT"})
+            self.assertIn(horizon, {60, 240})
+            return [(0.2, 0.01)]
+
+        with (
+            patch.object(api_main, "orderbook_coverage", new=AsyncMock(return_value=coverage)),
+            patch.object(api_main, "orderbook_forward_returns", side_effect=samples) as forward_returns,
+        ):
+            report = await api_main.orderbook_research_report()
+
+        self.assertEqual(report["status"], "evaluated")
+        self.assertEqual(report["pairs"], ["BTCUSDT", "ETHUSDT"])
+        self.assertEqual(report["horizons_minutes"], [60, 240])
+        self.assertEqual(len(report["evaluations"]), 4)
+        self.assertEqual(forward_returns.await_count, 4)
+
+    async def test_orderbook_report_does_not_evaluate_before_coverage_gate(self) -> None:
+        coverage = {"status": "collecting", "observations": 10, "minimum_observations": 100, "coverage_ratio": 1.0}
+        with (
+            patch.object(api_main, "orderbook_coverage", new=AsyncMock(return_value=coverage)),
+            patch.object(api_main, "orderbook_forward_returns", new=AsyncMock()) as forward_returns,
+        ):
+            report = await api_main.orderbook_research_report()
+
+        self.assertEqual(report["status"], "collecting")
+        self.assertEqual(report["evaluations"], [])
+        forward_returns.assert_not_awaited()
+
+    async def test_stale_context_is_excluded_from_shadow_fusion(self) -> None:
+        stale_global = {"status": "stale", "context": {"regime": "RISK_OFF"}}
+        with (
+            patch.object(api_main, "latest_global_context", new=AsyncMock(return_value=stale_global)),
+            patch.object(api_main, "latest_context", new=AsyncMock(return_value=None)),
+            patch.object(api_main, "latest_ai_assessment", new=AsyncMock(return_value=None)),
+        ):
+            result = await api_main.context_fusion()
+
+        self.assertEqual(result["recommendation"]["decision"], "NEUTRAL")
+        self.assertFalse(result["inputs_available"]["global_market"])
+        self.assertTrue(result["stale_inputs"]["global_market"])
+
     async def test_malformed_global_provider_payload_is_audited(self) -> None:
         with (
             patch.object(api_main, "fetch_global_market_context", new=AsyncMock(side_effect=ValueError("invalid payload"))),

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager, suppress
 import asyncio
+from collections import Counter
 from datetime import datetime, timezone
+import hashlib
 import json
+from pathlib import Path
 from statistics import fmean
 
 import asyncpg
@@ -18,6 +21,7 @@ from .ai_shadow import PROMPT_VERSION, ShadowAnalysisRequest, analyze_with_gemin
 from .news import NewsHeadline, fetch_crypto_headlines
 from .binance_market import WATCHED_SYMBOLS, fetch_market_connectivity, fetch_orderbook_context
 from .context_fusion import recommend_context_risk
+from .research import experiment_catalog
 
 CREATE_AUDIT_TABLE = "CREATE TABLE IF NOT EXISTS bot_audit_events (id BIGSERIAL PRIMARY KEY, event_type TEXT NOT NULL, payload JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
 CREATE_CONTEXT_TABLE = "CREATE TABLE IF NOT EXISTS market_context_snapshots (id BIGSERIAL PRIMARY KEY, source TEXT NOT NULL, context_type TEXT NOT NULL, payload JSONB NOT NULL DEFAULT '{}'::jsonb, observed_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
@@ -61,6 +65,70 @@ app = FastAPI(title="Trading Bot Control API", version="0.1.0", lifespan=lifespa
 async def record_event(event_type: str, payload: dict) -> None:
     async with app.state.database.acquire() as connection:
         await connection.execute("INSERT INTO bot_audit_events (event_type, payload) VALUES ($1, $2::jsonb)", event_type, json.dumps(payload))
+
+
+def normalize_audit_event(row: dict) -> dict:
+    """Convert PostgreSQL JSON fields into a stable response shape."""
+    payload = row.get("payload", {})
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {"raw": payload}
+    return {**row, "payload": payload if isinstance(payload, dict) else {"raw": payload}}
+
+
+def context_stale_after_seconds(source: str, context_type: str) -> int:
+    """Set a conservative display/analysis freshness window for shadow inputs."""
+    if source == "coingecko" and context_type == "global":
+        return max(settings.global_shadow_refresh_seconds * 2, 1_800)
+    if source == "binance" and context_type == "orderbook":
+        return max(settings.orderbook_shadow_refresh_seconds * 2, 900)
+    if source == "fred" and context_type == "macro":
+        # Macro series update slowly, but a manually refreshed snapshot should
+        # not be presented as current indefinitely.
+        return 72 * 3_600
+    if source == "ai" and context_type == "assessment":
+        return max(settings.ai_shadow_min_interval_seconds * 4, 3_600)
+    return 24 * 3_600
+
+
+def context_availability(observed_at: datetime, stale_after_seconds: int, now: datetime | None = None) -> tuple[str, int]:
+    """Return freshness separately from collection success; stale data stays auditable."""
+    reference = now or datetime.now(timezone.utc)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    age_seconds = max(int((reference - observed_at).total_seconds()), 0)
+    return ("available" if age_seconds <= stale_after_seconds else "stale", age_seconds)
+
+
+def summarize_decision_events(events: list[dict]) -> dict:
+    """Summarize auditable reasons for non-entry without changing execution."""
+    event_counts = Counter(event["event_type"] for event in events)
+    hold_reasons: Counter[str] = Counter()
+    latest_by_pair: dict[str, dict] = {}
+    for event in events:
+        payload = event.get("payload", {})
+        if event["event_type"] == "hold":
+            reasons = payload.get("failed_conditions", [])
+            if isinstance(reasons, list):
+                hold_reasons.update(str(reason) for reason in reasons)
+        pair = payload.get("pair")
+        if isinstance(pair, str) and pair not in latest_by_pair:
+            latest_by_pair[pair] = {
+                "event_type": event["event_type"],
+                "created_at": event["created_at"],
+                "regime": payload.get("regime"),
+                "rsi": payload.get("rsi"),
+                "adx_4h": payload.get("adx_4h"),
+                "failed_conditions": payload.get("failed_conditions", []),
+            }
+    return {
+        "events_observed": len(events),
+        "event_counts": dict(event_counts),
+        "hold_reasons": [{"reason": reason, "count": count} for reason, count in hold_reasons.most_common()],
+        "latest_by_pair": latest_by_pair,
+    }
 
 
 async def refresh_global_context_from_provider() -> dict:
@@ -134,27 +202,61 @@ async def orderbook_shadow_refresh_loop() -> None:
         await asyncio.sleep(settings.orderbook_shadow_refresh_seconds)
 
 
-async def latest_paper_run_heartbeat() -> datetime | None:
+def paper_strategy_source_sha256() -> str:
+    """Hash the mounted strategy source so an unlabelled source edit resets evidence."""
+    try:
+        return hashlib.sha256(Path(settings.paper_strategy_source_file).read_bytes()).hexdigest()
+    except OSError:
+        return "source_unavailable"
+
+
+def configured_paper_run_identity() -> tuple[str, str, str, str]:
+    return (
+        settings.freqtrade_strategy,
+        settings.freqtrade_profile_config,
+        settings.paper_run_revision,
+        paper_strategy_source_sha256(),
+    )
+
+
+def paper_run_heartbeat_payload() -> dict[str, str]:
+    strategy, profile, revision, source_sha256 = configured_paper_run_identity()
+    return {
+        "source": "api",
+        "mode": "paper",
+        "strategy": strategy,
+        "profile": profile,
+        "revision": revision,
+        "source_sha256": source_sha256,
+    }
+
+
+async def latest_paper_run_heartbeat() -> dict | None:
     async with app.state.database.acquire() as connection:
-        return await connection.fetchval(
-            "SELECT MAX(created_at) FROM bot_audit_events WHERE event_type = 'paper_run_heartbeat'"
+        row = await connection.fetchrow(
+            "SELECT created_at, payload FROM bot_audit_events WHERE event_type = 'paper_run_heartbeat' ORDER BY created_at DESC LIMIT 1"
         )
+    return dict(row) if row is not None else None
 
 
 async def paper_run_heartbeat_loop() -> None:
     last_heartbeat = await latest_paper_run_heartbeat()
+    last_observed_at = last_heartbeat["created_at"] if last_heartbeat else None
+    identity_changed = last_heartbeat is not None and paper_run_identity(last_heartbeat.get("payload")) != configured_paper_run_identity()
     delay = next_shadow_refresh_delay(
-        last_heartbeat,
+        last_observed_at,
         settings.paper_run_heartbeat_seconds,
         datetime.now(timezone.utc),
     )
+    if identity_changed:
+        delay = 0.0
     if delay:
         await asyncio.sleep(delay)
     while True:
         try:
             bot = await bot_status()
             if bot["freqtrade"] != "unavailable":
-                await record_event("paper_run_heartbeat", {"source": "api", "mode": "paper"})
+                await record_event("paper_run_heartbeat", paper_run_heartbeat_payload())
         except Exception:
             # A missing heartbeat is deliberately left as evidence of an
             # interruption. It must never affect execution.
@@ -170,7 +272,15 @@ async def latest_global_context() -> dict | None:
     if row is None:
         return None
     payload = row["payload"]
-    return {"status": "available", "observed_at": row["observed_at"], "context": json.loads(payload) if isinstance(payload, str) else payload}
+    stale_after_seconds = context_stale_after_seconds("coingecko", "global")
+    status, age_seconds = context_availability(row["observed_at"], stale_after_seconds)
+    return {
+        "status": status,
+        "observed_at": row["observed_at"],
+        "age_seconds": age_seconds,
+        "stale_after_seconds": stale_after_seconds,
+        "context": json.loads(payload) if isinstance(payload, str) else payload,
+    }
 
 
 async def latest_context(source: str, context_type: str) -> dict | None:
@@ -183,7 +293,15 @@ async def latest_context(source: str, context_type: str) -> dict | None:
     if row is None:
         return None
     payload = row["payload"]
-    return {"status": "available", "observed_at": row["observed_at"], "context": json.loads(payload) if isinstance(payload, str) else payload}
+    stale_after_seconds = context_stale_after_seconds(source, context_type)
+    status, age_seconds = context_availability(row["observed_at"], stale_after_seconds)
+    return {
+        "status": status,
+        "observed_at": row["observed_at"],
+        "age_seconds": age_seconds,
+        "stale_after_seconds": stale_after_seconds,
+        "context": json.loads(payload) if isinstance(payload, str) else payload,
+    }
 
 
 def orderbook_coverage_status(observations: int, coverage_ratio: float | None) -> str:
@@ -291,7 +409,15 @@ async def latest_ai_assessment() -> dict | None:
     if row is None:
         return None
     assessment = row["assessment"]
-    return {"status": "available", "observed_at": row["observed_at"], "assessment": json.loads(assessment) if isinstance(assessment, str) else assessment}
+    stale_after_seconds = context_stale_after_seconds("ai", "assessment")
+    status, age_seconds = context_availability(row["observed_at"], stale_after_seconds)
+    return {
+        "status": status,
+        "observed_at": row["observed_at"],
+        "age_seconds": age_seconds,
+        "stale_after_seconds": stale_after_seconds,
+        "assessment": json.loads(assessment) if isinstance(assessment, str) else assessment,
+    }
 
 
 async def store_context(source: str, context_type: str, payload: dict, observed_at: datetime) -> None:
@@ -477,22 +603,51 @@ def paper_run_status(
     return "ready_for_release_evidence"
 
 
-async def paper_run_summary() -> dict:
-    async with app.state.database.acquire() as connection:
-        rows = await connection.fetch(
-            "SELECT created_at FROM bot_audit_events WHERE event_type = 'paper_run_heartbeat' ORDER BY created_at ASC"
-        )
-    now = datetime.now(timezone.utc)
-    segment: list[datetime] = []
+def paper_run_identity(payload: object) -> tuple[str, str, str, str]:
+    """Identify the exact paper configuration that produced an evidence segment."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return (
+        str(payload.get("strategy") or "unknown"),
+        str(payload.get("profile") or "unknown"),
+        str(payload.get("revision") or "unknown"),
+        str(payload.get("source_sha256") or "unknown"),
+    )
+
+
+def latest_continuous_paper_run_segment(rows: list[dict]) -> tuple[list[dict], tuple[str, str, str, str] | None]:
+    """Restart release evidence on a continuity gap or frozen-identity change."""
+    segment: list[dict] = []
+    identity: tuple[str, str, str, str] | None = None
     previous: datetime | None = None
     for row in rows:
         observed_at = row["created_at"]
-        if previous is not None and (observed_at - previous).total_seconds() > settings.paper_run_continuity_gap_seconds:
+        row_identity = paper_run_identity(row.get("payload"))
+        changed_identity = identity is not None and row_identity != identity
+        interrupted = previous is not None and (observed_at - previous).total_seconds() > settings.paper_run_continuity_gap_seconds
+        if changed_identity or interrupted:
             segment = []
-        segment.append(observed_at)
+        if not segment:
+            identity = row_identity
+        segment.append(row)
         previous = observed_at
-    first_observed_at = segment[0] if segment else None
-    last_observed_at = segment[-1] if segment else None
+    return segment, identity
+
+
+async def paper_run_summary() -> dict:
+    async with app.state.database.acquire() as connection:
+        rows = await connection.fetch(
+            "SELECT created_at, payload FROM bot_audit_events WHERE event_type = 'paper_run_heartbeat' ORDER BY created_at ASC"
+        )
+    now = datetime.now(timezone.utc)
+    segment, identity = latest_continuous_paper_run_segment(list(rows))
+    first_observed_at = segment[0]["created_at"] if segment else None
+    last_observed_at = segment[-1]["created_at"] if segment else None
     duration_seconds = max((now - first_observed_at).total_seconds(), 0) if first_observed_at else 0
     expected_observations = int(duration_seconds // settings.paper_run_heartbeat_seconds) + 1 if first_observed_at else 0
     coverage_ratio = min(len(segment) / expected_observations, 1.0) if expected_observations else None
@@ -504,6 +659,10 @@ async def paper_run_summary() -> dict:
         "required_days": settings.paper_run_required_days,
         "first_observed_at": first_observed_at,
         "last_observed_at": last_observed_at,
+        "strategy": identity[0] if identity else None,
+        "profile": identity[1] if identity else None,
+        "revision": identity[2] if identity else None,
+        "source_sha256": identity[3] if identity else None,
     }
 
 
@@ -517,11 +676,17 @@ def release_readiness_checks(operations: dict, market: dict, paper_run: dict) ->
         },
         {
             "key": "eight_week_paper_run",
-            "passed": paper_run.get("status") == "ready_for_release_evidence",
+            "passed": paper_run.get("status") == "ready_for_release_evidence"
+            and paper_run.get("revision") not in {None, "unknown", "unqualified"}
+            and isinstance(paper_run.get("source_sha256"), str)
+            and len(paper_run["source_sha256"]) == 64,
             "detail": (
                 "Eight uninterrupted weeks are recorded."
                 if paper_run.get("status") == "ready_for_release_evidence"
-                else "Eight uninterrupted weeks with a frozen qualified strategy are not yet recorded."
+                and paper_run.get("revision") not in {None, "unknown", "unqualified"}
+                and isinstance(paper_run.get("source_sha256"), str)
+                and len(paper_run["source_sha256"]) == 64
+                else "Eight uninterrupted weeks with one frozen qualified strategy revision are not yet recorded."
             ),
         },
         {
@@ -596,6 +761,44 @@ async def orderbook_context_coverage() -> dict:
     return await orderbook_coverage()
 
 
+@app.get("/v1/research/orderbook/report")
+async def orderbook_research_report() -> dict:
+    """Expose only the pre-registered microstructure comparisons to the cockpit."""
+    coverage = await orderbook_coverage()
+    pairs = list(WATCHED_SYMBOLS)
+    horizons = [60, 240]
+    if coverage["status"] != "ready_for_research":
+        return {
+            "status": coverage["status"],
+            "mode": "shadow",
+            "coverage": coverage,
+            "pairs": pairs,
+            "horizons_minutes": horizons,
+            "evaluations": [],
+        }
+    samples = await asyncio.gather(
+        *(orderbook_forward_returns(pair, horizon) for pair in pairs for horizon in horizons)
+    )
+    evaluations = [
+        {
+            "pair": pair,
+            "horizon_minutes": horizon,
+            "summary": summarize_forward_returns(pair_samples),
+        }
+        for (pair, horizon), pair_samples in zip(
+            ((pair, horizon) for pair in pairs for horizon in horizons), samples, strict=True
+        )
+    ]
+    return {
+        "status": "evaluated",
+        "mode": "shadow",
+        "coverage": coverage,
+        "pairs": pairs,
+        "horizons_minutes": horizons,
+        "evaluations": evaluations,
+    }
+
+
 @app.get("/v1/research/orderbook/forward-returns")
 async def orderbook_forward_return_research(pair: str = "BTCUSDT", horizon_minutes: int = 60) -> dict:
     if pair not in WATCHED_SYMBOLS:
@@ -626,19 +829,61 @@ async def context_fusion() -> dict:
     global_context = await latest_global_context()
     macro_context = await latest_context("fred", "macro")
     ai_shadow = await latest_ai_assessment()
+    fresh_global = global_context if global_context and global_context["status"] == "available" else None
+    fresh_macro = macro_context if macro_context and macro_context["status"] == "available" else None
+    fresh_ai = ai_shadow if ai_shadow and ai_shadow["status"] == "available" else None
     recommendation = recommend_context_risk(
-        global_context["context"] if global_context else None,
-        macro_context["context"] if macro_context else None,
-        ai_shadow["assessment"] if ai_shadow else None,
+        fresh_global["context"] if fresh_global else None,
+        fresh_macro["context"] if fresh_macro else None,
+        fresh_ai["assessment"] if fresh_ai else None,
     )
     return {
         "recommendation": recommendation.as_dict(),
         "inputs_available": {
-            "global_market": global_context is not None,
-            "macro": macro_context is not None,
-            "ai": ai_shadow is not None,
+            "global_market": fresh_global is not None,
+            "macro": fresh_macro is not None,
+            "ai": fresh_ai is not None,
+        },
+        "stale_inputs": {
+            "global_market": bool(global_context and global_context["status"] == "stale"),
+            "macro": bool(macro_context and macro_context["status"] == "stale"),
+            "ai": bool(ai_shadow and ai_shadow["status"] == "stale"),
         },
     }
+
+
+@app.get("/v1/context/shadow-snapshot")
+async def context_shadow_snapshot() -> dict:
+    """Return current advisory inputs without creating an execution decision."""
+    global_context, macro_context, orderbook_context, ai_shadow = await asyncio.gather(
+        latest_global_context(),
+        latest_context("fred", "macro"),
+        latest_context("binance", "orderbook"),
+        latest_ai_assessment(),
+    )
+    async with app.state.database.acquire() as connection:
+        headline_count = int(await connection.fetchval("SELECT COUNT(*) FROM news_headlines"))
+    return {
+        "available": any(
+            context is not None and context["status"] == "available"
+            for context in (global_context, macro_context, orderbook_context, ai_shadow)
+        ) or headline_count > 0,
+        "mode": "shadow",
+        "inputs": {
+            "global_market": global_context,
+            "macro": macro_context,
+            "orderbook": orderbook_context,
+            "ai": ai_shadow,
+            "news_headline_count": headline_count,
+        },
+        "execution_effect": "none",
+    }
+
+
+@app.get("/v1/research/experiments")
+async def research_experiments() -> dict:
+    """Expose experiment intent and gate requirements to the local cockpit."""
+    return {"experiments": experiment_catalog()}
 
 
 @app.post("/v1/maintenance/retention")
@@ -787,7 +1032,18 @@ async def analyze_latest_news(x_bot_control_token: str | None = Header(default=N
 async def decisions(limit: int = 50) -> list[dict]:
     async with app.state.database.acquire() as connection:
         rows = await connection.fetch("SELECT id, event_type, payload, created_at FROM bot_audit_events ORDER BY id DESC LIMIT $1", min(max(limit, 1), 100))
-    return [dict(row) for row in rows]
+    return [normalize_audit_event(dict(row)) for row in rows]
+
+
+@app.get("/v1/decisions/summary")
+async def decision_summary(limit: int = 200) -> dict:
+    """Read-only explanation of recent HOLD and risk decisions for the cockpit."""
+    async with app.state.database.acquire() as connection:
+        rows = await connection.fetch(
+            "SELECT id, event_type, payload, created_at FROM bot_audit_events ORDER BY id DESC LIMIT $1",
+            min(max(limit, 1), 500),
+        )
+    return summarize_decision_events([normalize_audit_event(dict(row)) for row in rows])
 
 
 @app.post("/internal/freqtrade", status_code=202)

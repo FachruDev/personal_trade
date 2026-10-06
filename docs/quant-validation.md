@@ -8,6 +8,18 @@
 - Fee tetap memakai konfigurasi backtest Freqtrade sebesar 0.1% sebagai baseline konservatif.
 - Parameter belum dituning pada hasil di bawah ini. Semua hasil menggunakan `RegimeRiskStrategy` yang sama.
 
+## Fixed rolling-forward protocol
+
+Kandidat yang sudah lolos gate development/validation/out-of-sample belum dapat
+dipromosikan langsung. Parameter dan source kandidat harus dibekukan, lalu
+`scripts/run-walk-forward-validation.ps1` menjalankan lima fold forward enam
+bulan: 2024H1, 2024H2, 2025H1, 2025H2, dan 2026H1. Tidak ada optimisasi,
+pemilihan parameter, atau perubahan pair di antara fold. Masing-masing fold
+harus memenuhi gate yang sama: minimum 30 trade, profit factor minimum 1.15,
+expectancy positif, dan maximum drawdown maksimum 5%. Laporan mentah tersimpan
+sebagai `docs/quant-reports/<label>-walk-forward.json`; kegagalan satu fold
+menolak kandidat.
+
 ## Baseline multi-periode
 
 | Period | Range | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
@@ -263,3 +275,40 @@ development has 168 trades, -26.32% return, 0.53 profit factor, and 26.69%
 drawdown; validation has only five trades; out-of-sample has 43 trades, -3.40%
 return, 0.76 profit factor, and 8.37% drawdown. The revision is technically
 sound but remains ineligible for live promotion.
+
+## Experiment 013 — composite trend pullback (pre-registered)
+
+This is a research-only hypothesis for BTC/USDT and ETH/USDT. It uses the
+unchanged 1H/4H setup, 0.1% fee assumption, existing ATR exits, and the fixed
+development (`20231013-20251001`), validation (`20251001-20260401`), and
+out-of-sample (`20260401-20261002`) periods.
+
+The 4H gate requires close above EMA200, EMA50 above EMA200, ADX above 20, and
+ATR% between the 20th and 80th percentile of the *previous* 540 completed 4H
+candles. The 1H entry requires EMA20 above EMA50, close above EMA50, a low
+within 0.3 ATR of EMA20, close at or above EMA20 and no more than one ATR above
+it, RSI recovering within 40–55, an improving MACD histogram, and volume at
+least 1.1 times the 20-candle average.
+
+The 30/25/20/15/10 score is audit metadata only. It cannot create an entry,
+change stake, stop, or exit. Global, macro, order-book, news, and AI inputs are
+captured alongside live research candidates in shadow mode and likewise cannot
+affect execution. The candidate is rejected unless the existing gate passes in
+all three periods, followed by look-ahead and recursive analysis.
+
+| Period | Trades | Return | Profit factor | Expectancy | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Development | 3 | +0.13% | 1.22 | +0.4418 | 0.61% |
+| Validation | 0 | 0.00% | 0.00 | 0.0000 | 0.00% |
+| Out-of-sample | 0 | 0.00% | 0.00 | 0.0000 | 0.00% |
+
+### Decision
+
+The composite candidate is rejected. Its development result is too small to
+interpret, and validation plus out-of-sample contain no observations. No paper
+profile, risk limit, or active strategy is changed. The immutable gate report
+is stored locally as `docs/quant-reports/composite_trend_pullback.json`.
+Freqtrade look-ahead analysis found no biased entry, exit, or indicator signal.
+Recursive analysis also found no recursive or indicator-only look-ahead bias;
+the 4H EMA200 and volume average remain stable from 1,000 through 2,200 startup
+candles. Integrity passes do not override the failed sample-size gate.

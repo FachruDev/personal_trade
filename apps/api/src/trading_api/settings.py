@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     freqtrade_api_url: str = "http://freqtrade:8080"
     freqtrade_api_username: str = "freqtrader"
     freqtrade_api_password: str
+    freqtrade_strategy: str = "LimitedRiskRegimeRiskStrategy"
+    freqtrade_profile_config: str = "/freqtrade/user_data/config/profiles/paper-conservative.json"
+    paper_strategy_source_file: str = "/freqtrade/user_data/strategies/RegimeRiskStrategy.py"
+    # Deliberately stays unqualified until a candidate passes the quant gate
+    # and an operator freezes its reviewed revision for the paper evidence run.
+    paper_run_revision: str = "unqualified"
     bot_control_token: str
     trading_environment: str = "paper"
     coingecko_api_key: str = ""

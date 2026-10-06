@@ -14,7 +14,7 @@ This checklist is intentionally a release gate, not a promise that the current s
 ## Paper-release gate
 
 - [ ] `scripts/preflight-release.ps1 -Mode paper` passes.
-- [ ] The bot has completed at least eight uninterrupted weeks of dry-run with the frozen strategy and fixed profile. `GET /v1/paper-run` must report `ready_for_release_evidence` with no continuity interruption.
+- [ ] The bot has completed at least eight uninterrupted weeks of dry-run with the frozen strategy and fixed profile. `GET /v1/paper-run` must report `ready_for_release_evidence` with no continuity interruption, the approved non-`unqualified` `revision`, and a SHA-256 source digest. Changing strategy, profile, `PAPER_RUN_REVISION`, or the mounted strategy source begins a new evidence segment.
 - [ ] Audit records trace a sample entry, rejected entry, protection event, partial exit, and final exit.
 - [ ] Pause/resume, restart, API outage, PostgreSQL outage, Redis outage, and Binance connectivity failure were exercised and returned the bot to a safe state. Pause/resume, Freqtrade restart, and API/PostgreSQL/Redis outages passed in the paper environment on 2 October 2026; provider and Binance-connectivity tests remain. See [operational validation](operational-validation.md).
 - [ ] The Binance market-status check reports `clock_synchronized: true`; synchronize the host clock before release if drift exceeds two seconds. The local preflight and Compose live-start validator both fail closed when this check cannot pass.
