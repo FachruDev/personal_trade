@@ -9,7 +9,7 @@ type BotPerformance = { status: string; mode: string; detail?: string; performan
 type ShadowFreshness = { status: string; observed_at?: string; age_seconds?: number; stale_after_seconds?: number };
 type GlobalContext = ShadowFreshness & { context?: { regime?: string; market_cap_change_24h?: number | null; btc_dominance?: number | null } };
 type OrderBookContext = ShadowFreshness & { context?: { pairs?: Record<string, { mid_price?: number | null; imbalance?: number | null; spread_bps?: number | null; bid_levels?: number; ask_levels?: number }> } };
-type OrderBookCoverage = { status: string; observations: number; minimum_observations: number; coverage_ratio?: number | null; first_observed_at?: string | null; last_observed_at?: string | null };
+type OrderBookCoverage = { status: string; observations: number; minimum_observations: number; coverage_ratio?: number | null; first_observed_at?: string | null; last_observed_at?: string | null; remaining_observations?: number; estimated_ready_at?: string | null; continuity_gap_seconds?: number };
 type OrderBookResearch = { status: string; mode: string; coverage: OrderBookCoverage; pairs: string[]; horizons_minutes: number[]; evaluations: Array<{ pair: string; horizon_minutes: number; summary: Record<string, { samples: number; mean_return_bps: number | null; positive_rate: number | null }> }> };
 type NewsHeadlines = { mode: string; headlines: Array<{ title: string; source: string; url: string; published_at?: string | null }> };
 type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; clock_drift_seconds?: number; clock_synchronized?: boolean; detail?: string };
@@ -56,6 +56,40 @@ function botState(bot: BotStatus | null) {
   return "Berjalan";
 }
 
+function humanizeRunStatus(status: string) {
+  const labels: Record<string, string> = {
+    not_started: "belum dimulai",
+    collecting: "mengumpulkan bukti",
+    interrupted: "terputus",
+    ready_for_release_evidence: "bukti rilis siap",
+  };
+  return labels[status] ?? status.replaceAll("_", " ");
+}
+
+function humanizeResearchTerm(term: string) {
+  const labels: Record<string, string> = {
+    development: "pengembangan",
+    validation: "validasi",
+    out_of_sample: "uji di luar sampel",
+    four_week_continuous_collection: "empat minggu koleksi kontinu",
+    "60_minute_forward_return": "return 60 menit",
+    "240_minute_forward_return": "return 240 menit",
+    lookahead: "anti look-ahead",
+    recursive: "uji rekursif",
+    fixed_buckets: "bucket tetap",
+    fixed_horizons: "horizon tetap",
+    shadow_only: "shadow-only",
+  };
+  return labels[term] ?? term.replaceAll("_", " ");
+}
+function humanizeResearchStatus(status: string) {
+  const labels: Record<string, string> = {
+    rejected: "Ditolak",
+    collecting_data: "Mengumpulkan data",
+    qualified: "Memenuhi syarat",
+  };
+  return labels[status] ?? status.replaceAll("_", " ");
+}
 function humanizeReason(reason: string) {
   const labels: Record<string, string> = {
     regime_sideways: "Regime 4H sideways",
@@ -88,6 +122,12 @@ function contextAge(context: ShadowFreshness | null | undefined) {
   return `${(context.age_seconds / 3_600).toFixed(1)} jam lalu`;
 }
 
+function orderBookReadyEstimate(coverage: OrderBookCoverage | null) {
+  if (!coverage) return "—";
+  if (coverage.status === "ready_for_research") return "Siap dievaluasi";
+  if (!coverage.estimated_ready_at) return "Menunggu snapshot pertama";
+  return `Perkiraan selesai ${formatDate(coverage.estimated_ready_at)} · sisa ${coverage.remaining_observations ?? "—"} snapshot`;
+}
 function numberFrom(payload: Record<string, unknown>, key: string) {
   const value = payload[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -239,9 +279,9 @@ export default function Home() {
         </div>
         <p className="subheading">Status ini hanya menjadi siap bila setiap bukti rilis telah terpenuhi. Paper mode dan container sehat saja belum cukup.</p>
         <ul className="check-list">
-          {(state.releaseReadiness?.checks ?? []).map((check) => <li key={check.key}>{check.passed ? "✓" : "○"} {check.detail}</li>)}
+          {(state.releaseReadiness?.checks ?? []).map((check) => <li key={check.key} className={`release-check ${check.passed ? "passed" : "pending"}`}>{check.detail}</li>)}
         </ul>
-        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {state.releaseReadiness.paper_run.status.replaceAll("_", " ")} · target {state.releaseReadiness.paper_run.required_days} hari{state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}% lengkap`} · revisi {state.releaseReadiness.paper_run.revision ?? "belum tercatat"} · source {state.releaseReadiness.paper_run.source_sha256?.slice(0, 12) ?? "belum tercatat"}</p> : null}
+        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {humanizeRunStatus(state.releaseReadiness.paper_run.status)} · target {state.releaseReadiness.paper_run.required_days} hari{state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}% lengkap`} · revisi {state.releaseReadiness.paper_run.revision ?? "belum tercatat"} · source {state.releaseReadiness.paper_run.source_sha256?.slice(0, 12) ?? "belum tercatat"}</p> : null}
       </section>
 
       <section className="panel">
@@ -252,12 +292,12 @@ export default function Home() {
         <p className="subheading">Eksperimen di bawah ini terisolasi dari bot paper. Statusnya tidak dapat mempromosikan strategi atau mengubah order.</p>
         {(state.research?.experiments ?? []).map((experiment) => (
           <article className="research-card" key={experiment.label}>
-            <div className="panel-heading"><div><h3>{experiment.strategy}</h3><p className="research-meta">{experiment.pairs.join(" · ")} · entry {experiment.timeframes.entry} · trend {experiment.timeframes.trend}</p></div><span className="event-count">{experiment.status.replaceAll("_", " ")}</span></div>
+            <div className="panel-heading"><div><h3>{experiment.strategy}</h3><p className="research-meta">{experiment.pairs.join(" · ")} · entry {experiment.timeframes.entry} · trend {experiment.timeframes.trend}</p></div><span className="event-count">{humanizeResearchStatus(experiment.status)}</span></div>
             <p>{experiment.hypothesis}</p>
             <ul className="check-list compact-list">{experiment.entry_summary.map((rule) => <li key={rule}>{rule}</li>)}</ul>
             <dl className="detail-list compact-list">
               <div><dt>Gate</dt><dd>{experiment.validation.gate_description ?? `PF ≥ ${experiment.validation.required_profit_factor} · expectancy positif · ≥ ${experiment.validation.required_trades_per_period} trade/periode · DD ≤ ${experiment.validation.maximum_drawdown_percent}%`}</dd></div>
-              <div><dt>Validasi</dt><dd>{experiment.validation.periods.join(" · ")} · {experiment.validation.integrity_checks.join(" & ")}</dd></div>
+              <div><dt>Validasi</dt><dd>{experiment.validation.periods.map(humanizeResearchTerm).join(" · ")} · {experiment.validation.integrity_checks.map(humanizeResearchTerm).join(" & ")}</dd></div>
               <div><dt>Paper jika lolos</dt><dd>{experiment.risk_profile.promotion}</dd></div>
               <div><dt>Context shadow</dt><dd>{experiment.context_policy}</dd></div>
               {experiment.validation.result ? <div><dt>Hasil</dt><dd>{experiment.validation.result.reason}</dd></div> : null}
@@ -265,7 +305,7 @@ export default function Home() {
             {experiment.validation.result ? <div className="research-results" aria-label={`Hasil ${experiment.strategy}`}>
               {(["development", "validation", "out_of_sample"] as const).map((period) => {
                 const result = experiment.validation.result![period];
-                return <div key={period}><strong>{period.replaceAll("_", " ")}</strong><span>{result.trades} trade · PF {result.profit_factor.toFixed(2)} · {result.return_percent.toFixed(2)}% · DD {result.maximum_drawdown_percent.toFixed(2)}%</span></div>;
+                return <div key={period}><strong>{humanizeResearchTerm(period)}</strong><span>{result.trades} trade · PF {result.profit_factor.toFixed(2)} · {result.return_percent.toFixed(2)}% · DD {result.maximum_drawdown_percent.toFixed(2)}%</span></div>;
               })}
             </div> : null}
           </article>
@@ -334,6 +374,8 @@ export default function Home() {
             <div><dt>Status data</dt><dd>{contextLabel(state.orderBookContext)} · {contextAge(state.orderBookContext)}</dd></div>
             <div><dt>Snapshot</dt><dd>{state.orderBookContext.observed_at ? formatDate(state.orderBookContext.observed_at) : "—"}</dd></div>
             <div><dt>Kesiapan riset</dt><dd>{state.orderBookCoverage ? `${state.orderBookCoverage.observations} / ${state.orderBookCoverage.minimum_observations} snapshot · ${state.orderBookCoverage.status.replaceAll("_", " ")}${state.orderBookCoverage.coverage_ratio == null ? "" : ` · ${(state.orderBookCoverage.coverage_ratio * 100).toFixed(1)}% lengkap`}` : "—"}</dd></div>
+            <div><dt>Proyeksi koleksi</dt><dd>{orderBookReadyEstimate(state.orderBookCoverage)}</dd></div>
+            <div><dt>Batas outage</dt><dd>{state.orderBookCoverage?.continuity_gap_seconds ? `${Math.floor(state.orderBookCoverage.continuity_gap_seconds / 60)} menit tanpa snapshot akan memulai segmen riset baru.` : "—"}</dd></div>
           </dl>
           {state.orderBookResearch?.status === "evaluated" ? <div className="research-results" aria-label="Hasil riset order book">
             {state.orderBookResearch.evaluations.map((evaluation) => <div key={`${evaluation.pair}-${evaluation.horizon_minutes}`}>

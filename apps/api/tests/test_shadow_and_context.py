@@ -89,6 +89,14 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertEqual(result.decision, "HOLD")
         self.assertEqual(result.risk_multiplier, 0.0)
 
+    def test_orderbook_collection_projection_does_not_overstate_readiness(self) -> None:
+        last_observed_at = datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc)
+        projection = api_main.orderbook_collection_projection(17, 100, last_observed_at, 300)
+        self.assertEqual(projection["remaining_observations"], 83)
+        self.assertEqual(projection["estimated_ready_at"], last_observed_at + timedelta(minutes=415))
+        complete = api_main.orderbook_collection_projection(100, 100, last_observed_at, 300)
+        self.assertEqual(complete["remaining_observations"], 0)
+        self.assertEqual(complete["estimated_ready_at"], last_observed_at)
     def test_orderbook_coverage_requires_length_and_density(self) -> None:
         with patch.object(api_main.settings, "orderbook_shadow_min_observations", 100):
             self.assertEqual(api_main.orderbook_coverage_status(0, None), "not_collected")

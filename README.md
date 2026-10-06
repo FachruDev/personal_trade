@@ -69,7 +69,7 @@ Provider or malformed-response failures are recorded as audit events and do not 
 
 `GET /v1/context/orderbook` exposes public Binance top-of-book telemetry for BTCUSDT and ETHUSDT. It records mid-price, top-ten-level notional imbalance, and spread every five minutes by default (`ORDERBOOK_SHADOW_REFRESH_SECONDS=300`). This is a separate research series for testing an independent microstructure hypothesis; it uses no exchange credentials and cannot affect orders.
 
-`GET /v1/context/orderbook/coverage` reports how much history is available. The default research gate is 8,064 snapshots (four weeks at five-minute cadence) with at least 95% cadence coverage; until then the series is collecting data and is not evidence for a strategy change.
+`GET /v1/context/orderbook/coverage` reports how much history is available. The default research gate is 8,064 snapshots (four weeks at five-minute cadence) with at least 95% cadence coverage; until then the series is collecting data and is not evidence for a strategy change. It also reports the remaining snapshots, a cadence-based estimated-ready timestamp, and the outage threshold that would begin a new evidence segment. The estimate is operational planning only, never a promotion signal.
 
 The schedulers preserve the previous collection cadence after an API restart, and order-book coverage counts distinct five-minute buckets rather than restart duplicates. A one-hour-or-longer order-book outage starts a new collection segment for research readiness while preserving older raw snapshots for audit.
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager, suppress
 import asyncio
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -304,6 +304,24 @@ async def latest_context(source: str, context_type: str) -> dict | None:
     }
 
 
+def orderbook_collection_projection(
+    observations: int,
+    minimum_observations: int,
+    last_observed_at: datetime | None,
+    refresh_seconds: int,
+) -> dict[str, int | datetime | None]:
+    """Describe remaining collection work without treating partial data as evidence."""
+    remaining_observations = max(minimum_observations - observations, 0)
+    estimated_ready_at = (
+        last_observed_at + timedelta(seconds=remaining_observations * refresh_seconds)
+        if last_observed_at is not None and remaining_observations
+        else last_observed_at if observations >= minimum_observations else None
+    )
+    return {
+        "remaining_observations": remaining_observations,
+        "estimated_ready_at": estimated_ready_at,
+    }
+
 def orderbook_coverage_status(observations: int, coverage_ratio: float | None) -> str:
     if observations == 0:
         return "not_collected"
@@ -335,6 +353,12 @@ async def orderbook_coverage() -> dict:
         elapsed_seconds = max((last_observed_at - first_observed_at).total_seconds(), 0)
         expected = int(elapsed_seconds // settings.orderbook_shadow_refresh_seconds) + 1
         coverage_ratio = min(observations / expected, 1.0) if expected else 1.0
+    projection = orderbook_collection_projection(
+        observations,
+        settings.orderbook_shadow_min_observations,
+        last_observed_at,
+        settings.orderbook_shadow_refresh_seconds,
+    )
     return {
         "status": orderbook_coverage_status(observations, coverage_ratio),
         "observations": observations,
@@ -342,6 +366,9 @@ async def orderbook_coverage() -> dict:
         "coverage_ratio": coverage_ratio,
         "first_observed_at": first_observed_at,
         "last_observed_at": last_observed_at,
+        "remaining_observations": projection["remaining_observations"],
+        "estimated_ready_at": projection["estimated_ready_at"],
+        "continuity_gap_seconds": settings.orderbook_shadow_continuity_gap_seconds,
     }
 
 
@@ -672,7 +699,7 @@ def release_readiness_checks(operations: dict, market: dict, paper_run: dict) ->
         {
             "key": "quant_validation",
             "passed": False,
-            "detail": "Current strategy has not passed the frozen quant gate.",
+            "detail": "Strategi aktif belum lolos quant gate yang dibekukan.",
         },
         {
             "key": "eight_week_paper_run",
@@ -681,33 +708,33 @@ def release_readiness_checks(operations: dict, market: dict, paper_run: dict) ->
             and isinstance(paper_run.get("source_sha256"), str)
             and len(paper_run["source_sha256"]) == 64,
             "detail": (
-                "Eight uninterrupted weeks are recorded."
+                "Delapan minggu paper run kontinu telah tercatat."
                 if paper_run.get("status") == "ready_for_release_evidence"
                 and paper_run.get("revision") not in {None, "unknown", "unqualified"}
                 and isinstance(paper_run.get("source_sha256"), str)
                 and len(paper_run["source_sha256"]) == 64
-                else "Eight uninterrupted weeks with one frozen qualified strategy revision are not yet recorded."
+                else "Delapan minggu paper run kontinu dengan satu revisi strategi yang memenuhi syarat belum tercatat."
             ),
         },
         {
             "key": "execution_engine",
             "passed": bool(operations.get("freqtrade_reachable")),
-            "detail": "Freqtrade control API is reachable." if operations.get("freqtrade_reachable") else "Freqtrade control API is unavailable.",
+            "detail": "Control API Freqtrade dapat dihubungi." if operations.get("freqtrade_reachable") else "Control API Freqtrade tidak dapat dihubungi.",
         },
         {
             "key": "kill_switch_ready",
             "passed": operations.get("kill_switch_enabled") is False,
-            "detail": "Kill-switch is ready." if operations.get("kill_switch_enabled") is False else "Kill-switch state blocks new entries.",
+            "detail": "Kill-switch siap digunakan." if operations.get("kill_switch_enabled") is False else "Kill-switch sedang memblokir entry baru.",
         },
         {
             "key": "binance_market",
             "passed": bool(market.get("reachable")),
-            "detail": "BTCUSDT and ETHUSDT are tradable." if market.get("reachable") else "Binance market status is unavailable.",
+            "detail": "BTCUSDT dan ETHUSDT berstatus dapat diperdagangkan." if market.get("reachable") else "Status market Binance belum tersedia.",
         },
         {
             "key": "clock_synchronized",
             "passed": market.get("clock_synchronized") is True,
-            "detail": "Host clock is synchronized with Binance." if market.get("clock_synchronized") is True else "Host clock must be synchronized with Binance.",
+            "detail": "Jam host sudah sinkron dengan Binance." if market.get("clock_synchronized") is True else "Jam host perlu disinkronkan dengan Binance.",
         },
     ]
 

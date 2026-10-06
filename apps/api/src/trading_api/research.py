@@ -10,16 +10,16 @@ COMPOSITE_TREND_PULLBACK = {
     "mode": "research_only",
     "pairs": ["BTC/USDT", "ETH/USDT"],
     "timeframes": {"entry": "1h", "trend": "4h"},
-    "hypothesis": "A 4H bull trend plus a measured 1H EMA20 pullback, recovery momentum, normal volatility, and above-average volume can improve entry quality.",
+    "hypothesis": "Trend 4H bullish, pullback EMA20 pada 1H, pemulihan momentum, volatilitas normal, dan volume di atas rata-rata diuji untuk meningkatkan kualitas entry.",
     "entry_summary": [
-        "4H close above EMA200, EMA50 above EMA200, ADX above 20",
-        "4H ATR% within the previous 90-day 20th–80th percentile range",
-        "1H EMA20 above EMA50, EMA20 touch within 0.3 ATR, and close no more than 1 ATR above EMA20",
-        "1H RSI recovers in 40–55, MACD histogram improves, volume at least 1.1x 20-candle average",
+        "4H: close di atas EMA200, EMA50 di atas EMA200, ADX di atas 20",
+        "4H: ATR% berada pada rentang persentil 20–80 dari 90 hari sebelumnya",
+        "1H: EMA20 di atas EMA50, low menyentuh EMA20 dalam 0,3 ATR, close maksimal 1 ATR di atas EMA20",
+        "1H: RSI pulih pada area 40–55, histogram MACD membaik, volume minimal 1,1× rata-rata 20 candle",
     ],
     "risk_profile": {
-        "research": "Existing ATR exit callbacks only; no production or paper profile change",
-        "promotion": "0.25% risk per trade and one open paper position only after the complete gate passes",
+        "research": "Hanya callback exit ATR yang ada; tidak ada perubahan profile paper atau production",
+        "promotion": "Risiko 0,25% per trade dan satu posisi paper terbuka hanya setelah seluruh gate lolos",
     },
     "validation": {
         "periods": ["development", "validation", "out_of_sample"],
@@ -33,10 +33,10 @@ COMPOSITE_TREND_PULLBACK = {
             "development": {"trades": 3, "profit_factor": 1.22, "return_percent": 0.13, "maximum_drawdown_percent": 0.61},
             "validation": {"trades": 0, "profit_factor": 0.0, "return_percent": 0.0, "maximum_drawdown_percent": 0.0},
             "out_of_sample": {"trades": 0, "profit_factor": 0.0, "return_percent": 0.0, "maximum_drawdown_percent": 0.0},
-            "reason": "The fixed entry conditions produce too few observations for validation or promotion.",
+            "reason": "Kondisi entry yang dikunci menghasilkan terlalu sedikit observasi untuk validasi atau promosi.",
         },
     },
-    "context_policy": "Global, macro, order-book, news, and AI data are captured as shadow metadata. They cannot alter entries, stake, stops, or exits.",
+    "context_policy": "Data global, macro, order-book, news, dan AI hanya dicatat sebagai metadata shadow. Data tersebut tidak dapat mengubah entry, ukuran posisi, stop, atau exit.",
 }
 
 ORDERBOOK_IMBALANCE_SHADOW = {
@@ -46,16 +46,16 @@ ORDERBOOK_IMBALANCE_SHADOW = {
     "mode": "shadow_only",
     "pairs": ["BTC/USDT", "ETH/USDT"],
     "timeframes": {"entry": "5m snapshot", "trend": "60m / 240m forward"},
-    "hypothesis": "The public top-ten-level bid/ask imbalance may be associated with forward returns, before it is considered as a separate strategy feature.",
+    "hypothesis": "Imbalance bid/ask dari sepuluh level order-book publik diuji terhadap return ke depan sebelum dipertimbangkan sebagai fitur strategi terpisah.",
     "entry_summary": [
-        "Public Binance top-ten depth snapshots are collected every five minutes",
-        "The fixed sample gate is four continuous weeks: 8,064 snapshots with at least 95% cadence coverage",
-        "Only pre-declared bid-heavy, neutral, and ask-heavy imbalance buckets are evaluated",
-        "Only 60-minute and 240-minute forward-return horizons are evaluated",
+        "Snapshot depth Binance publik pada sepuluh level teratas dikumpulkan tiap lima menit",
+        "Gate sampel dikunci pada empat minggu kontinu: 8.064 snapshot dengan cakupan cadence minimal 95%",
+        "Hanya bucket imbalance bid-heavy, netral, dan ask-heavy yang sudah ditetapkan akan dievaluasi",
+        "Hanya horizon return ke depan 60 dan 240 menit yang dievaluasi",
     ],
     "risk_profile": {
-        "research": "No effect on orders, stake, stop-loss, take-profit, or exit behavior",
-        "promotion": "Not eligible until collection is complete, evidence is stable, and a separate frozen strategy passes the complete quant gate",
+        "research": "Tidak memengaruhi order, ukuran posisi, stop-loss, take-profit, atau exit",
+        "promotion": "Belum dapat dipromosikan sampai koleksi selesai, bukti stabil, dan strategi beku terpisah lolos seluruh quant gate",
     },
     "validation": {
         "periods": ["four_week_continuous_collection", "60_minute_forward_return", "240_minute_forward_return"],
@@ -66,7 +66,7 @@ ORDERBOOK_IMBALANCE_SHADOW = {
         "integrity_checks": ["fixed_buckets", "fixed_horizons", "shadow_only"],
         "gate_description": "8,064 snapshot dengan cakupan cadence minimal 95%, lalu evaluasi forward return yang sudah ditetapkan. Ini belum merupakan strategi trade.",
     },
-    "context_policy": "Order-book data remains audit-only. It cannot create, reject, resize, stop, or exit a Freqtrade position.",
+    "context_policy": "Data order-book tetap audit-only. Data ini tidak dapat membuat, menolak, mengubah ukuran, menghentikan, atau menutup posisi Freqtrade.",
 }
 
 

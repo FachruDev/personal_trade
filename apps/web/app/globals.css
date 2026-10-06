@@ -193,6 +193,14 @@ dd {
   color: var(--accent);
   font-weight: 700;
 }
+.release-check.passed::before {
+  content: "✓";
+  color: var(--accent);
+}
+.release-check.pending::before {
+  content: "○";
+  color: #a46f23;
+}
 .research-card {
   margin-top: 20px;
   border-top: 1px solid var(--line);
