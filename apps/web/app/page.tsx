@@ -15,7 +15,7 @@ type NewsHeadlines = { mode: string; headlines: Array<{ title: string; source: s
 type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; clock_drift_seconds?: number; clock_synchronized?: boolean; detail?: string };
 type ReleaseReadiness = { ready: boolean; environment: string; checks: Array<{ key: string; passed: boolean; detail: string }>; paper_run?: { status: string; observations: number; expected_observations: number; coverage_ratio?: number | null; required_days: number; elapsed_days?: number; progress_ratio?: number; remaining_days?: number; estimated_ready_at?: string | null; first_observed_at?: string | null; strategy?: string | null; profile?: string | null; revision?: string | null; source_sha256?: string | null } };
 type MacroContext = ShadowFreshness & { detail?: string; last_attempt_at?: string; context?: { series?: Record<string, { value?: number | null; date?: string | null }> } };
-type ShadowCollectionStatus = { mode: string; execution_effect: string; sources: Record<string, { enabled: boolean; cadence_seconds: number; status: string; last_success_at?: string | null; last_failure_at?: string | null }> };
+type ShadowCollectionStatus = { mode: string; execution_effect: string; sources: Record<string, { enabled: boolean; configuration_valid?: boolean; cadence_seconds: number; status: string; last_success_at?: string | null; last_failure_at?: string | null }> };
 type AiShadow = ShadowFreshness & { assessment?: { market_bias: string; confidence: number; risk_level: string; trade_support: boolean; event_summary: string; provider: string; model: string; input_source?: string } };
 type ContextFusion = { recommendation: { decision: string; risk_multiplier: number; reasons: string[]; mode: string }; inputs_available: { global_market: boolean; macro: boolean; ai: boolean }; stale_inputs?: { global_market: boolean; macro: boolean; ai: boolean } };
 type Decision = { id: number; event_type: string; payload: Record<string, unknown>; created_at: string };
@@ -125,7 +125,7 @@ function contextAge(context: ShadowFreshness | null | undefined) {
 }
 
 function collectionStatusLabel(status: string) {
-  const labels: Record<string, string> = { collecting: "Aktif", waiting: "Menunggu", unavailable: "Perlu perhatian", disabled: "Dimatikan" };
+  const labels: Record<string, string> = { collecting: "Aktif", waiting: "Menunggu", unavailable: "Perlu perhatian", configuration_invalid: "Konfigurasi perlu diperbaiki", disabled: "Dimatikan" };
   return labels[status] ?? status.replaceAll("_", " ");
 }
 
@@ -432,7 +432,7 @@ export default function Home() {
               ))}
               <div><dt>Status data</dt><dd>{contextLabel(state.macroContext)} · {contextAge(state.macroContext)}</dd></div>
             </dl>
-          ) : <div className="empty-state"><p>{state.macroContext?.status === "unavailable" ? "Macro belum dapat diperbarui." : "Belum ada snapshot macro."}</p><span>{state.macroContext?.detail ?? "Macro dicatat sebagai konteks dan belum memengaruhi transaksi."}</span>{state.macroContext?.last_attempt_at ? <span>Percobaan terakhir: {formatDate(state.macroContext.last_attempt_at)}</span> : null}</div>}
+          ) : <div className="empty-state"><p>{state.macroContext?.status === "configuration_invalid" ? "Format key FRED perlu diperbaiki." : state.macroContext?.status === "unavailable" ? "Macro belum dapat diperbarui." : "Belum ada snapshot macro."}</p><span>{state.macroContext?.detail ?? "Macro dicatat sebagai konteks dan belum memengaruhi transaksi."}</span>{state.macroContext?.last_attempt_at ? <span>Percobaan terakhir: {formatDate(state.macroContext.last_attempt_at)}</span> : null}</div>}
         </article>
 
         <article className="panel">

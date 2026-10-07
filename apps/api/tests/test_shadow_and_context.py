@@ -124,6 +124,14 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertFalse(api_main.optional_shadow_scheduler_enabled("   ", 3_600))
         self.assertFalse(api_main.optional_shadow_scheduler_enabled("key-present", 0))
 
+    def test_macro_scheduler_requires_a_valid_fred_key_format(self) -> None:
+        valid_key = "a" * 32
+        self.assertTrue(api_main.fred_api_key_format_valid(valid_key))
+        self.assertFalse(api_main.fred_api_key_format_valid("A" * 32))
+        self.assertFalse(api_main.fred_api_key_format_valid("a" * 31))
+        self.assertTrue(api_main.macro_shadow_scheduler_enabled(valid_key, 3_600))
+        self.assertFalse(api_main.macro_shadow_scheduler_enabled("invalid", 3_600))
+
     def test_shadow_collection_status_only_reports_safe_operational_state(self) -> None:
         timestamp = datetime(2026, 10, 7, 2, 0, tzinfo=timezone.utc)
         self.assertEqual(api_main.shadow_collection_status(False, timestamp, None), "disabled")
@@ -274,6 +282,16 @@ class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["mode"], "shadow")
         self.assertEqual(result["last_attempt_at"], last_attempt)
         self.assertIn("FRED_API_KEY", result["detail"])
+
+    async def test_macro_context_reports_an_invalid_key_format_without_provider_request(self) -> None:
+        with (
+            patch.object(api_main, "latest_context", new=AsyncMock(return_value=None)),
+            patch.object(api_main.settings, "fred_api_key", "not-a-fred-key"),
+        ):
+            result = await api_main.macro_context()
+
+        self.assertEqual(result["status"], "configuration_invalid")
+        self.assertIn("32 karakter", result["detail"])
 
     async def test_orderbook_report_uses_only_the_predeclared_pairs_and_horizons(self) -> None:
         coverage = {"status": "ready_for_research", "observations": 100, "minimum_observations": 100, "coverage_ratio": 1.0}

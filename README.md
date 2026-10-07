@@ -79,7 +79,7 @@ After that gate, `GET /v1/research/orderbook/forward-returns?pair=BTCUSDT&horizo
 
 When the quant strategy identifies an entry candidate, it records the current context-fusion recommendation in that candidate's audit event. This is best-effort shadow telemetry only: unavailable context, its recommendation, and its risk multiplier never block or change an order.
 
-`GET /v1/context/macro` exposes the most recent FRED macro snapshot. With `FRED_API_KEY` configured, the API refreshes it automatically every `MACRO_SHADOW_REFRESH_SECONDS` (six hours by default); set that value to `0` to disable automatic collection. The local, token-protected `POST /v1/context/macro/refresh` endpoint remains available for a manual refresh. Macro context is audit-only.
+`GET /v1/context/macro` exposes the most recent FRED macro snapshot. With `FRED_API_KEY` configured, the API refreshes it automatically every `MACRO_SHADOW_REFRESH_SECONDS` (six hours by default); set that value to `0` to disable automatic collection. FRED issues a 32-character lowercase alphanumeric API key. Put it only in `.env`, then run `docker compose up -d --force-recreate api` so the local API receives the new value. The local, token-protected `POST /v1/context/macro/refresh` endpoint remains available for a manual refresh. Macro context is audit-only.
 
 ## Shadow news pipeline
 

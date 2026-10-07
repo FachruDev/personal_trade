@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 from statistics import fmean
 
 import asyncpg
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI):
         app.state.global_shadow_refresh_task = asyncio.create_task(global_shadow_refresh_loop())
     if settings.orderbook_shadow_refresh_seconds > 0:
         app.state.orderbook_shadow_refresh_task = asyncio.create_task(orderbook_shadow_refresh_loop())
-    if optional_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds):
+    if macro_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds):
         app.state.macro_shadow_refresh_task = asyncio.create_task(macro_shadow_refresh_loop())
     if optional_shadow_scheduler_enabled(settings.news_api_key, settings.news_shadow_refresh_seconds):
         app.state.news_shadow_refresh_task = asyncio.create_task(news_shadow_refresh_loop())
@@ -161,6 +162,15 @@ def summarize_decision_events(events: list[dict]) -> dict:
 def optional_shadow_scheduler_enabled(api_key: str, refresh_seconds: int) -> bool:
     """Only call optional providers when a key and an explicit cadence exist."""
     return bool(api_key.strip()) and refresh_seconds > 0
+
+
+def fred_api_key_format_valid(api_key: str) -> bool:
+    """FRED keys have a fixed public format; never return the supplied value."""
+    return bool(re.fullmatch(r"[a-z0-9]{32}", api_key.strip()))
+
+
+def macro_shadow_scheduler_enabled(api_key: str, refresh_seconds: int) -> bool:
+    return optional_shadow_scheduler_enabled(api_key, refresh_seconds) and fred_api_key_format_valid(api_key)
 
 async def refresh_global_context_from_provider() -> dict:
     try:
@@ -1098,7 +1108,19 @@ async def shadow_collection_status_endpoint() -> dict:
         "mode": "shadow",
         "sources": {
             "global_market": source(settings.global_shadow_refresh_seconds > 0, settings.global_shadow_refresh_seconds, global_context, global_failure),
-            "macro": source(optional_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds), settings.macro_shadow_refresh_seconds, macro_context, macro_failure),
+            "macro": {
+                **source(macro_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds), settings.macro_shadow_refresh_seconds, macro_context, macro_failure),
+                "status": (
+                    "configuration_invalid"
+                    if settings.fred_api_key.strip() and not fred_api_key_format_valid(settings.fred_api_key)
+                    else shadow_collection_status(
+                        macro_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds),
+                        macro_context.get("observed_at") if macro_context is not None else None,
+                        macro_failure,
+                    )
+                ),
+                "configuration_valid": not settings.fred_api_key.strip() or fred_api_key_format_valid(settings.fred_api_key),
+            },
             "orderbook": source(settings.orderbook_shadow_refresh_seconds > 0, settings.orderbook_shadow_refresh_seconds, orderbook_context, orderbook_failure),
             "news": {
                 "enabled": optional_shadow_scheduler_enabled(settings.news_api_key, settings.news_shadow_refresh_seconds),
@@ -1174,6 +1196,12 @@ async def macro_context() -> dict:
     context = await latest_context("fred", "macro")
     if context is not None:
         return context
+    if settings.fred_api_key.strip() and not fred_api_key_format_valid(settings.fred_api_key):
+        return {
+            "status": "configuration_invalid",
+            "mode": "shadow",
+            "detail": "FRED_API_KEY harus berisi 32 karakter huruf kecil atau angka.",
+        }
     last_failure_at = await latest_provider_failure("macro_context_refresh_failed")
     if last_failure_at is not None:
         return {
@@ -1191,6 +1219,8 @@ async def refresh_macro_context(x_bot_control_token: str | None = Header(default
         raise HTTPException(status_code=401, detail="Invalid bot control token")
     if not settings.fred_api_key:
         raise HTTPException(status_code=409, detail="FRED_API_KEY is not configured")
+    if not fred_api_key_format_valid(settings.fred_api_key):
+        raise HTTPException(status_code=409, detail="FRED_API_KEY has an invalid format")
     try:
         payload = await refresh_macro_context_from_provider()
     except httpx.HTTPError as exc:
