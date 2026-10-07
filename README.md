@@ -85,6 +85,10 @@ When the quant strategy identifies an entry candidate, it records the current co
 
 With `NEWS_API_KEY` configured, the NewsAPI headline collector refreshes automatically every `NEWS_SHADOW_REFRESH_SECONDS` (one hour by default); set that value to `0` to disable automatic collection. The local, token-protected `POST /v1/news/headlines/refresh` endpoint remains available for a manual refresh. It deduplicates crypto headlines, stores them in PostgreSQL, and exposes them through `GET /v1/news/headlines`. The dashboard renders the collected headlines as research context only; they do not change entries, exits, position size, or risk limits.
 
+## Moving to a VPS
+
+The bot's source folder alone does not contain PostgreSQL audit data, paper-run evidence, or order-book snapshots. Use [portable-state/README.md](portable-state/README.md) to export and restore a portable database package when moving hosts. Keep `.env` outside Git even for a private repository.
+
 ## Binance market status
 
 `GET /v1/market/binance/status` checks the public Binance endpoint for BTCUSDT and ETHUSDT, plus Binance server time, and caches the result for one minute. It uses no exchange credential and is shown on the operator dashboard so pair availability and local clock drift are visible. Drift above two seconds is shown as a warning; synchronize the host clock before a release.

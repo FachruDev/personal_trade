@@ -1,0 +1,26 @@
+{
+  "format": "trading-bot-portable-state/v1",
+  "created_at": "2026-10-07T07:27:09.6333777+00:00",
+  "postgres_dump": "trading-bot-postgres-20261007T072707Z.dump",
+  "freqtrade_trade_files": [],
+  "historical_data_included": false,
+  "source_revision": "2824e327cb465a13d6fd4ed65b2492a8967acb9a",
+  "paper_run": {
+    "status": "collecting",
+    "observations": 2,
+    "expected_observations": 2,
+    "coverage_ratio": 1.0,
+    "required_days": 56,
+    "elapsed_days": 0.01988131070601852,
+    "progress_ratio": 0.0003550234054646164,
+    "remaining_days": 55.98011868929398,
+    "estimated_ready_at": "2026-12-02T06:58:31.783567Z",
+    "first_observed_at": "2026-10-07T06:58:31.783567Z",
+    "last_observed_at": "2026-10-07T07:13:31.732114Z",
+    "strategy": "LimitedRiskRegimeRiskStrategy",
+    "profile": "/freqtrade/user_data/config/profiles/paper-conservative.json",
+    "revision": "unqualified",
+    "source_sha256": "be8b8d4ba015e1212798b6915059472460f90b9ed1a3cb3845ed2e79db1d0b3e"
+  },
+  "secrets_included": false
+}

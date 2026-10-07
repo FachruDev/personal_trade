@@ -259,26 +259,32 @@ export default function Home() {
     const pair = typeof decision.payload.pair === "string" ? decision.payload.pair : null;
     return (decisionPair === "all" || pair === decisionPair) && (decisionType === "all" || decision.event_type === decisionType);
   }), [decisionPair, decisionType, state.decisions]);
+  const paperRun = state.releaseReadiness?.paper_run;
+  const paperProgress = Math.min(Math.max(paperRun?.progress_ratio ?? 0, 0), 1) * 100;
+  const orderBookProgress = Math.min(Math.max(state.orderBookCoverage?.observations ?? 0, 0) / Math.max(state.orderBookCoverage?.minimum_observations ?? 1, 1), 1) * 100;
 
   return (
     <main className="dashboard-shell">
       <section className="dashboard-header">
         <div>
-          <p className="eyebrow">Trading Bot Control Center</p>
-          <h1>Monitor dry-run secara jelas.</h1>
-          <p className="subheading">Dashboard ini membaca kondisi bot dan jejak keputusan. Semua order pada fase ini tetap simulasi.</p>
+          <p className="eyebrow">Personal trading cockpit</p>
+          <h1>Tenang memantau, jelas mengambil keputusan.</h1>
+          <p className="subheading">Satu tempat untuk melihat kondisi bot, bukti paper run, riset, dan jejak keputusan. Semua order pada fase ini tetap simulasi.</p>
         </div>
-        <button className="refresh-button" onClick={() => void loadDashboard()} disabled={refreshing}>
-          {refreshing ? "Memperbarui…" : "Perbarui data"}
-        </button>
+        <div className="header-actions">
+          <span className={`mode-badge ${state.operations?.environment === "live" ? "mode-live" : ""}`}>{state.operations?.environment ?? state.bot?.mode ?? "memuat"} mode</span>
+          <button className="refresh-button" onClick={() => void loadDashboard()} disabled={refreshing}>
+            {refreshing ? "Memperbarui…" : "Perbarui data"}
+          </button>
+        </div>
       </section>
 
       {state.error ? <p className="notice notice-error">{state.error}</p> : null}
-      <p className="notice">
-        Mode aktif: <strong>{state.operations?.environment ?? state.bot?.mode ?? "memuat"}</strong>. {state.operations?.environment === "live" ? "Periksa checklist rilis dan kill-switch sebelum melanjutkan." : "Order pada profil ini adalah simulasi."}
-      </p>
+      <nav className="section-nav" aria-label="Navigasi dashboard">
+        <a href="#overview">Ringkasan</a><a href="#evidence">Bukti</a><a href="#research">Riset</a><a href="#context">Konteks</a><a href="#audit">Audit</a>
+      </nav>
 
-      <section className="status-grid" aria-label="Ringkasan kondisi bot">
+      <section id="overview" className="status-grid" aria-label="Ringkasan kondisi bot">
         <StatusCard label="Control API" value={connected ? "Terhubung" : "Memuat"} detail="PostgreSQL dan Redis diperiksa oleh health check." active={connected} />
         <StatusCard label="Freqtrade" value={botState(state.bot)} detail="Execution engine Binance Spot." active={state.operations?.freqtrade_reachable === true} />
         <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"} · Jam ${state.binanceMarket.clock_drift_seconds == null ? "—" : `${state.binanceMarket.clock_drift_seconds.toFixed(2)} dtk`}${state.binanceMarket.clock_synchronized === false ? " · perlu sinkronisasi sebelum rilis" : ""}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true && state.binanceMarket?.clock_synchronized !== false} />
@@ -286,19 +292,24 @@ export default function Home() {
         <StatusCard label="Kill-switch" value={state.operations?.kill_switch_enabled ? "Aktif" : "Siap"} detail={state.operations?.kill_switch_enabled ? "Entry baru diblokir oleh API." : "Tidak ada blokir entry aktif."} active={!state.operations?.kill_switch_enabled} />
       </section>
 
-      <section className="panel">
+      <section id="evidence" className="panel release-panel">
         <div className="panel-heading">
           <div><p className="eyebrow">Release gate</p><h2>Kesiapan go-live</h2></div>
-          <span className="event-count">{state.releaseReadiness?.ready ? "Siap" : "Belum siap"}</span>
+          <span className={`event-count ${state.releaseReadiness?.ready ? "event-positive" : "event-warning"}`}>{state.releaseReadiness?.ready ? "Siap" : "Belum siap"}</span>
         </div>
         <p className="subheading">Status ini hanya menjadi siap bila setiap bukti rilis telah terpenuhi. Paper mode dan container sehat saja belum cukup.</p>
+        {paperRun ? <div className="evidence-progress" aria-label={`Progres paper run ${paperProgress.toFixed(1)} persen`}>
+          <div className="progress-copy"><span>Paper-run evidence</span><strong>{paperProgress.toFixed(1)}%</strong></div>
+          <div className="progress-track"><span style={{ width: `${paperProgress}%` }} /></div>
+          <div className="progress-footnote"><span>{humanizeRunStatus(paperRun.status)} · {(paperRun.elapsed_days ?? 0).toFixed(1)} dari {paperRun.required_days} hari</span><span>{paperRun.coverage_ratio == null ? "Cadence menunggu data" : `Cadence ${(paperRun.coverage_ratio * 100).toFixed(1)}%`}</span></div>
+        </div> : null}
         <ul className="check-list">
           {(state.releaseReadiness?.checks ?? []).map((check) => <li key={check.key} className={`release-check ${check.passed ? "passed" : "pending"}`}>{check.detail}</li>)}
         </ul>
         {state.binanceMarket?.clock_synchronized === false ? <p className="notice notice-error">Jam Windows berbeda {state.binanceMarket.clock_drift_seconds?.toFixed(2) ?? "—"} detik dari Binance. Sebelum rilis, buka pengaturan Waktu & bahasa Windows lalu sinkronkan waktu secara otomatis.</p> : null}        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {humanizeRunStatus(state.releaseReadiness.paper_run.status)} · bukti {((state.releaseReadiness.paper_run.progress_ratio ?? 0) * 100).toFixed(1)}% ({(state.releaseReadiness.paper_run.elapsed_days ?? 0).toFixed(1)} / {state.releaseReadiness.paper_run.required_days} hari){state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · cadence ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}%`}{state.releaseReadiness.paper_run.estimated_ready_at ? ` · estimasi ${formatDate(state.releaseReadiness.paper_run.estimated_ready_at)}` : ""} · revisi {state.releaseReadiness.paper_run.revision ?? "belum tercatat"} · source {state.releaseReadiness.paper_run.source_sha256?.slice(0, 12) ?? "belum tercatat"}</p> : null}
       </section>
 
-      <section className="panel">
+      <section id="research" className="panel">
         <div className="panel-heading">
           <div><p className="eyebrow">Quant research</p><h2>Kandidat strategi</h2></div>
           <span className="event-count">{state.research?.experiments.length ?? 0} eksperimen</span>
@@ -391,7 +402,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="panel">
+      <section id="context" className="panel">
         <div className="panel-heading">
           <div><p className="eyebrow">Market microstructure</p><h2>Order book shadow</h2></div>
           <span className="event-count">{contextLabel(state.orderBookContext)}</span>
@@ -409,6 +420,10 @@ export default function Home() {
             <div><dt>Proyeksi koleksi</dt><dd>{orderBookReadyEstimate(state.orderBookCoverage)}</dd></div>
             <div><dt>Batas outage</dt><dd>{state.orderBookCoverage?.continuity_gap_seconds ? `${Math.floor(state.orderBookCoverage.continuity_gap_seconds / 60)} menit tanpa snapshot akan memulai segmen riset baru.` : "—"}</dd></div>
           </dl>
+          {state.orderBookCoverage ? <div className="evidence-progress compact-progress" aria-label={`Progres koleksi order book ${orderBookProgress.toFixed(1)} persen`}>
+            <div className="progress-copy"><span>Koleksi order-book untuk riset</span><strong>{orderBookProgress.toFixed(1)}%</strong></div>
+            <div className="progress-track"><span style={{ width: `${orderBookProgress}%` }} /></div>
+          </div> : null}
           {state.orderBookResearch?.status === "evaluated" ? <div className="research-results" aria-label="Hasil riset order book">
             {state.orderBookResearch.evaluations.map((evaluation) => <div key={`${evaluation.pair}-${evaluation.horizon_minutes}`}>
               <strong>{evaluation.pair} · {evaluation.horizon_minutes} menit</strong>
@@ -486,7 +501,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="panel decisions-panel">
+      <section id="audit" className="panel decisions-panel">
         <div className="panel-heading">
           <div><p className="eyebrow">Entry explanation</p><h2>Mengapa bot belum membeli?</h2></div>
           <span className="event-count">{state.decisionSummary?.events_observed ?? 0} event dianalisis</span>
