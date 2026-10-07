@@ -13,6 +13,8 @@ type OrderBookCoverage = { status: string; observations: number; minimum_observa
 type OrderBookResearch = { status: string; mode: string; coverage: OrderBookCoverage; pairs: string[]; horizons_minutes: number[]; evaluations: Array<{ pair: string; horizon_minutes: number; summary: Record<string, { samples: number; mean_return_bps: number | null; positive_rate: number | null }> }> };
 type NewsHeadlines = { mode: string; headlines: Array<{ title: string; source: string; url: string; published_at?: string | null }> };
 type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; clock_drift_seconds?: number; clock_synchronized?: boolean; detail?: string };
+type MarketCandle = { opened_at: number; open: number; high: number; low: number; close: number; volume: number };
+type MarketCandles = { symbol: string; interval: string; observed_at: string; candles: MarketCandle[]; mode: string; execution_effect: string };
 type ReleaseReadiness = { ready: boolean; environment: string; checks: Array<{ key: string; passed: boolean; detail: string }>; paper_run?: { status: string; observations: number; expected_observations: number; coverage_ratio?: number | null; required_days: number; elapsed_days?: number; progress_ratio?: number; remaining_days?: number; estimated_ready_at?: string | null; first_observed_at?: string | null; strategy?: string | null; profile?: string | null; revision?: string | null; source_sha256?: string | null } };
 type MacroContext = ShadowFreshness & { detail?: string; last_attempt_at?: string; context?: { series?: Record<string, { value?: number | null; date?: string | null }> } };
 type ShadowCollectionStatus = { mode: string; execution_effect: string; sources: Record<string, { enabled: boolean; configuration_valid?: boolean; cadence_seconds: number; status: string; last_success_at?: string | null; last_failure_at?: string | null }> };
@@ -30,6 +32,7 @@ type DashboardState = {
   performance: BotPerformance | null;
   news: NewsHeadlines | null;
   binanceMarket: BinanceMarket | null;
+  marketCandles: MarketCandles | null;
   releaseReadiness: ReleaseReadiness | null;
   globalContext: GlobalContext | null;
   orderBookContext: OrderBookContext | null;
@@ -46,7 +49,7 @@ type DashboardState = {
   updatedAt: Date | null;
 };
 
-const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, releaseReadiness: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, orderBookResearch: null, macroContext: null, collectionStatus: null, aiShadow: null, contextFusion: null, research: null, decisionSummary: null, decisions: [], error: null, updatedAt: null };
+const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, marketCandles: null, releaseReadiness: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, orderBookResearch: null, macroContext: null, collectionStatus: null, aiShadow: null, contextFusion: null, research: null, decisionSummary: null, decisions: [], error: null, updatedAt: null };
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
@@ -140,6 +143,11 @@ function numberFrom(payload: Record<string, unknown>, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function formatPrice(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: value >= 1_000 ? 0 : 2 }).format(value);
+}
+
 function auditSummary(decision: Decision) {
   if (decision.event_type === "paper_run_continuity_interrupted") {
     const gapSeconds = numberFrom(decision.payload, "gap_seconds");
@@ -183,17 +191,19 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [decisionPair, setDecisionPair] = useState("all");
   const [decisionType, setDecisionType] = useState("all");
+  const [chartPair, setChartPair] = useState("BTCUSDT");
 
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, releaseReadinessResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, orderBookResearchResponse, macroResponse, collectionStatusResponse, aiShadowResponse, fusionResponse, researchResponse, decisionSummaryResponse, decisionsResponse] = await Promise.all([
+      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, candlesResponse, releaseReadinessResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, orderBookResearchResponse, macroResponse, collectionStatusResponse, aiShadowResponse, fusionResponse, researchResponse, decisionSummaryResponse, decisionsResponse] = await Promise.all([
         fetch("/api/trading/health", { cache: "no-store" }),
         fetch("/api/trading/v1/bot/status", { cache: "no-store" }),
         fetch("/api/trading/v1/operational-state", { cache: "no-store" }),
         fetch("/api/trading/v1/bot/performance", { cache: "no-store" }),
         fetch("/api/trading/v1/news/headlines", { cache: "no-store" }),
         fetch("/api/trading/v1/market/binance/status", { cache: "no-store" }),
+        fetch(`/api/trading/v1/market/binance/candles?pair=${chartPair}&interval=1h&limit=48`, { cache: "no-store" }),
         fetch("/api/trading/v1/release/readiness", { cache: "no-store" }),
         fetch("/api/trading/v1/context/global", { cache: "no-store" }),
         fetch("/api/trading/v1/context/orderbook", { cache: "no-store" }),
@@ -207,16 +217,17 @@ export default function Home() {
         fetch("/api/trading/v1/decisions/summary", { cache: "no-store" }),
         fetch("/api/trading/v1/decisions", { cache: "no-store" }),
       ]);
-      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !releaseReadinessResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !orderBookResearchResponse.ok || !macroResponse.ok || !collectionStatusResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !researchResponse.ok || !decisionSummaryResponse.ok || !decisionsResponse.ok) {
+      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !candlesResponse.ok || !releaseReadinessResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !orderBookResearchResponse.ok || !macroResponse.ok || !collectionStatusResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !researchResponse.ok || !decisionSummaryResponse.ok || !decisionsResponse.ok) {
         throw new Error("Dashboard belum dapat mengambil data dari control API.");
       }
-      const [health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions] = (await Promise.all([
+      const [health, bot, operations, performance, news, binanceMarket, marketCandles, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions] = (await Promise.all([
         healthResponse.json(),
         botResponse.json(),
         operationsResponse.json(),
         performanceResponse.json(),
         newsResponse.json(),
         binanceMarketResponse.json(),
+        candlesResponse.json(),
         releaseReadinessResponse.json(),
         contextResponse.json(),
         orderBookResponse.json(),
@@ -229,8 +240,8 @@ export default function Home() {
         researchResponse.json(),
         decisionSummaryResponse.json(),
         decisionsResponse.json(),
-      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, ReleaseReadiness, GlobalContext, OrderBookContext, OrderBookCoverage, OrderBookResearch, MacroContext, ShadowCollectionStatus, AiShadow, ContextFusion, ResearchExperiments, DecisionSummary, Decision[]];
-      setState({ health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions, error: null, updatedAt: new Date() });
+      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, MarketCandles, ReleaseReadiness, GlobalContext, OrderBookContext, OrderBookCoverage, OrderBookResearch, MacroContext, ShadowCollectionStatus, AiShadow, ContextFusion, ResearchExperiments, DecisionSummary, Decision[]];
+      setState({ health, bot, operations, performance, news, binanceMarket, marketCandles, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions, error: null, updatedAt: new Date() });
     } catch {
       setState((current) => ({
         ...current,
@@ -239,7 +250,7 @@ export default function Home() {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [chartPair]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadDashboard(), 0);
@@ -290,6 +301,25 @@ export default function Home() {
         <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"} · Jam ${state.binanceMarket.clock_drift_seconds == null ? "—" : `${state.binanceMarket.clock_drift_seconds.toFixed(2)} dtk`}${state.binanceMarket.clock_synchronized === false ? " · perlu sinkronisasi sebelum rilis" : ""}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true && state.binanceMarket?.clock_synchronized !== false} />
         <StatusCard label="Pasangan awal" value="BTC / ETH" detail="BTC/USDT dan ETH/USDT, signal 1H dan regime 4H." />
         <StatusCard label="Kill-switch" value={state.operations?.kill_switch_enabled ? "Aktif" : "Siap"} detail={state.operations?.kill_switch_enabled ? "Entry baru diblokir oleh API." : "Tidak ada blokir entry aktif."} active={!state.operations?.kill_switch_enabled} />
+      </section>
+
+      <section className="market-overview" aria-label="Market watch">
+        <article className="panel market-chart-panel">
+          <div className="panel-heading">
+            <div><p className="eyebrow">Market watch</p><h2>Harga pasar, 48 jam terakhir</h2></div>
+            <div className="segment-control" aria-label="Pilih pair chart">
+              {(["BTCUSDT", "ETHUSDT"] as const).map((pair) => <button key={pair} className={chartPair === pair ? "selected" : ""} onClick={() => setChartPair(pair)}>{pair.replace("USDT", "/USDT")}</button>)}
+            </div>
+          </div>
+          <MarketChart candles={state.marketCandles?.candles ?? []} pair={chartPair} />
+          <p className="chart-note">Data candle Binance publik · interval 1 jam · hanya untuk pemantauan, bukan signal atau eksekusi.</p>
+        </article>
+        <article className="panel portfolio-panel">
+          <p className="eyebrow">Paper portfolio</p><h2>Ringkasan akun simulasi</h2>
+          <div className="portfolio-metric"><span>Profit semua posisi</span><strong className={(performance?.profit_all_coin ?? 0) >= 0 ? "positive" : "negative"}>{performance ? `${(performance.profit_all_coin ?? 0).toFixed(2)} USDT` : "—"}</strong><small>{performance ? `${(performance.profit_all_percent ?? 0).toFixed(2)}%` : "Memuat data"}</small></div>
+          <div className="portfolio-split"><div><span>Trade aktif/total</span><strong>{performance?.trade_count ?? "—"}</strong></div><div><span>Trade selesai</span><strong>{performance?.closed_trade_count ?? "—"}</strong></div></div>
+          <p className="portfolio-disclaimer">Bukan nilai rekening Binance. Angka ini berasal dari mode paper Freqtrade.</p>
+        </article>
       </section>
 
       <section id="evidence" className="panel release-panel">
@@ -554,4 +584,34 @@ function StatusCard({ label, value, detail, active = false }: { label: string; v
       <p className="status-meta">{detail}</p>
     </article>
   );
+}
+
+function MarketChart({ candles, pair }: { candles: MarketCandle[]; pair: string }) {
+  if (candles.length < 2) {
+    return <div className="chart-empty"><span>Memuat candle {pair.replace("USDT", "/USDT")}…</span></div>;
+  }
+  const closes = candles.map((candle) => candle.close);
+  const lowest = Math.min(...closes);
+  const highest = Math.max(...closes);
+  const range = Math.max(highest - lowest, highest * 0.002);
+  const points = closes.map((close, index) => {
+    const x = (index / (closes.length - 1)) * 100;
+    const y = 90 - ((close - lowest) / range) * 72;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  const first = closes[0];
+  const last = closes.at(-1) ?? first;
+  const change = ((last - first) / first) * 100;
+  const positive = change >= 0;
+
+  return <div className="chart-wrap">
+    <div className="chart-stats"><div><span>Harga terakhir</span><strong>${formatPrice(last)}</strong></div><div className={positive ? "positive" : "negative"}><span>Perubahan 48 jam</span><strong>{positive ? "+" : ""}{change.toFixed(2)}%</strong></div><div><span>Rentang</span><strong>${formatPrice(lowest)}—${formatPrice(highest)}</strong></div></div>
+    <svg className="price-chart" viewBox="0 0 100 100" role="img" aria-label={`Grafik harga ${pair} selama 48 jam`} preserveAspectRatio="none">
+      <defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop stopColor="currentColor" stopOpacity=".30"/><stop offset="1" stopColor="currentColor" stopOpacity="0"/></linearGradient></defs>
+      <path d={`M 0,90 L ${points.split(" ").join(" L ")} L 100,90 Z`} fill="url(#chartFill)" />
+      <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.15" vectorEffect="non-scaling-stroke" />
+      <circle cx="100" cy={(90 - ((last - lowest) / range) * 72).toFixed(2)} r="1.8" fill="currentColor" vectorEffect="non-scaling-stroke" />
+    </svg>
+    <div className="chart-axis"><span>{new Date(candles[0].opened_at).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}</span><span>24 jam</span><span>Sekarang</span></div>
+  </div>;
 }

@@ -10,6 +10,7 @@ import httpx
 
 
 WATCHED_SYMBOLS = ("BTCUSDT", "ETHUSDT")
+CHART_INTERVALS = ("1h",)
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,61 @@ async def fetch_market_connectivity(base_url: str) -> dict:
         "pairs": pairs,
         "clock_drift_seconds": round(drift_seconds, 3),
         "clock_synchronized": drift_seconds <= 2.0,
+    }
+
+
+async def fetch_market_candles(base_url: str, symbol: str, interval: str = "1h", limit: int = 48) -> dict:
+    """Return a small, public candle series for the personal dashboard.
+
+    This deliberately uses Binance's public endpoint: it neither reads the
+    account nor participates in strategy or execution decisions.
+    """
+    if symbol not in WATCHED_SYMBOLS:
+        raise ValueError("Symbol is outside the dashboard watchlist")
+    if interval not in CHART_INTERVALS:
+        raise ValueError("Unsupported chart interval")
+    if not 12 <= limit <= 168:
+        raise ValueError("Chart limit must be between 12 and 168")
+
+    async with httpx.AsyncClient(timeout=8) as client:
+        response = await client.get(
+            f"{base_url.rstrip('/')}/api/v3/klines",
+            params={"symbol": symbol, "interval": interval, "limit": limit},
+        )
+        response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise ValueError("Candle provider returned an invalid payload")
+
+    candles: list[dict[str, float | int]] = []
+    for item in payload:
+        if not isinstance(item, list) or len(item) < 6:
+            raise ValueError("Candle provider returned an invalid candle")
+        opened_at = positive_number(item[0])
+        open_price = positive_number(item[1])
+        high = positive_number(item[2])
+        low = positive_number(item[3])
+        close = positive_number(item[4])
+        volume = positive_number(item[5])
+        if None in (opened_at, open_price, high, low, close, volume):
+            raise ValueError("Candle provider returned a malformed candle")
+        candles.append(
+            {
+                "opened_at": int(opened_at),
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "candles": candles,
+        "mode": "public_market_data",
+        "execution_effect": "none",
     }
 
 

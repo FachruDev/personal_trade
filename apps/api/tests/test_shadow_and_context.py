@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -7,7 +8,7 @@ import httpx
 from trading_api.ai_shadow import ShadowAnalysisRequest, parse_assessment, user_prompt
 from trading_api.market_context import classify_global_regime, number
 from trading_api.news import NewsHeadline, deduplicate_headlines, normalized_title, parse_newsapi_timestamp
-from trading_api.binance_market import WATCHED_SYMBOLS, clock_drift_seconds, orderbook_metrics
+from trading_api.binance_market import WATCHED_SYMBOLS, clock_drift_seconds, fetch_market_candles, orderbook_metrics
 from trading_api.context_fusion import recommend_context_risk
 from trading_api.research import experiment_catalog
 from trading_api import main as api_main
@@ -60,6 +61,18 @@ class GlobalMarketContextTests(unittest.TestCase):
 
     def test_binance_watchlist_matches_the_supported_pair_scope(self) -> None:
         self.assertEqual(WATCHED_SYMBOLS, ("BTCUSDT", "ETHUSDT"))
+
+    def test_public_candle_fetch_normalizes_binance_rows(self) -> None:
+        response = httpx.Response(
+            200,
+            json=[[1_700_000_000_000, "100", "105", "99", "103", "42"]],
+            request=httpx.Request("GET", "https://binance.example/api/v3/klines"),
+        )
+        with patch("trading_api.binance_market.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+            result = asyncio.run(fetch_market_candles("https://binance.example", "BTCUSDT", limit=12))
+        self.assertEqual(result["symbol"], "BTCUSDT")
+        self.assertEqual(result["candles"][0]["close"], 103.0)
+        self.assertEqual(result["execution_effect"], "none")
 
     def test_clock_drift_uses_binance_milliseconds_and_rejects_invalid_time(self) -> None:
         observed_at = datetime(2026, 10, 5, 1, 0, 1, 250_000, tzinfo=timezone.utc)

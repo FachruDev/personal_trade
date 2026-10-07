@@ -20,7 +20,7 @@ from .market_context import fetch_global_market_context
 from .macro_context import fetch_macro_context
 from .ai_shadow import PROMPT_VERSION, ShadowAnalysisRequest, analyze_with_gemini, analyze_with_openai_compatible
 from .news import NewsHeadline, fetch_crypto_headlines
-from .binance_market import WATCHED_SYMBOLS, fetch_market_connectivity, fetch_orderbook_context
+from .binance_market import WATCHED_SYMBOLS, fetch_market_candles, fetch_market_connectivity, fetch_orderbook_context
 from .context_fusion import recommend_context_risk
 from .research import experiment_catalog
 
@@ -948,6 +948,17 @@ async def binance_market_status() -> dict:
         await record_event("binance_market_connectivity_failed", provider_error_payload("binance", exc))
     await app.state.redis.set(cache_key, json.dumps(result), ex=60)
     return result
+
+
+@app.get("/v1/market/binance/candles")
+async def binance_market_candles(pair: str = "BTCUSDT", interval: str = "1h", limit: int = 48) -> dict:
+    """Public chart data for the dashboard; never strategy input or account data."""
+    try:
+        return await fetch_market_candles(settings.binance_public_base_url, pair, interval, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Binance public candle data unavailable") from exc
 
 
 @app.get("/v1/context/orderbook")
