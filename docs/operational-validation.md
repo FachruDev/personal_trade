@@ -41,3 +41,11 @@ Scope: local Docker paper environment only. Each dependency was stopped briefly 
 | Safe API fallback | API unit test simulates a Binance connection error and verifies `reachable: false`, no tradable pairs, and `clock_synchronized: false`. | Pass |
 
 The broader paper-release checklist still requires provider failure testing and a deliberately simulated Binance-connectivity failure, as well as a qualifying frozen strategy and extended dry-run evidence.
+
+## 7 October 2026 — Docker engine interruption
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Paper-run continuity | Docker Desktop was unavailable long enough for the API heartbeat gap to exceed the configured 30-minute limit. GET /v1/paper-run reported interrupted; no prior heartbeat segment was credited as continuous evidence. | Pass — fail closed |
+| Order-book research continuity | The order-book collector uses its separate one-hour research-gap rule. Current readiness is reported by GET /v1/context/orderbook/coverage; incomplete data remains research-only. | Pass — no promotion |
+| Recovery | PostgreSQL, Redis, API, dashboard, and Freqtrade were restored in paper mode. The active strategy and paper profile were unchanged. | Pass |

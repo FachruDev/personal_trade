@@ -79,11 +79,11 @@ After that gate, `GET /v1/research/orderbook/forward-returns?pair=BTCUSDT&horizo
 
 When the quant strategy identifies an entry candidate, it records the current context-fusion recommendation in that candidate's audit event. This is best-effort shadow telemetry only: unavailable context, its recommendation, and its risk multiplier never block or change an order.
 
-`GET /v1/context/macro` exposes the most recent FRED macro snapshot. Refresh it through `POST /v1/context/macro/refresh` after setting `FRED_API_KEY`; it is also audit-only.
+`GET /v1/context/macro` exposes the most recent FRED macro snapshot. With `FRED_API_KEY` configured, the API refreshes it automatically every `MACRO_SHADOW_REFRESH_SECONDS` (six hours by default); set that value to `0` to disable automatic collection. The local, token-protected `POST /v1/context/macro/refresh` endpoint remains available for a manual refresh. Macro context is audit-only.
 
 ## Shadow news pipeline
 
-After setting `NEWS_API_KEY`, refresh the NewsAPI headline collector through `POST /v1/news/headlines/refresh` with the local control token. It deduplicates crypto headlines, stores them in PostgreSQL, and exposes them through `GET /v1/news/headlines`. The dashboard renders the collected headlines as research context only; they do not change entries, exits, position size, or risk limits.
+With `NEWS_API_KEY` configured, the NewsAPI headline collector refreshes automatically every `NEWS_SHADOW_REFRESH_SECONDS` (one hour by default); set that value to `0` to disable automatic collection. The local, token-protected `POST /v1/news/headlines/refresh` endpoint remains available for a manual refresh. It deduplicates crypto headlines, stores them in PostgreSQL, and exposes them through `GET /v1/news/headlines`. The dashboard renders the collected headlines as research context only; they do not change entries, exits, position size, or risk limits.
 
 ## Binance market status
 
@@ -91,7 +91,7 @@ After setting `NEWS_API_KEY`, refresh the NewsAPI headline collector through `PO
 
 ## Paper-run continuity
 
-`GET /v1/paper-run` reports persisted Freqtrade-health heartbeats for the paper environment. The API records a heartbeat every 15 minutes by default and starts a new continuity segment after a 30-minute gap. Each heartbeat includes the selected strategy, profile, `PAPER_RUN_REVISION`, and SHA-256 digest of the read-only mounted strategy source. Any identity change starts a new segment. The release dashboard requires a complete 56-day segment; a restart alone does not reset the record, while an actual monitoring gap remains visible as an interruption.
+`GET /v1/paper-run` reports persisted Freqtrade-health heartbeats for the paper environment. The API records a heartbeat every 15 minutes by default and starts a new continuity segment after a 30-minute gap. Each heartbeat includes the selected strategy, profile, `PAPER_RUN_REVISION`, and SHA-256 digest of the read-only mounted strategy source. Any identity change starts a new segment. The release dashboard requires a complete 56-day segment; a restart alone does not reset the record, while an actual monitoring gap remains visible as an interruption. It reports evidence progress toward 56 days separately from heartbeat cadence coverage; a 100% cadence on the first heartbeat does not mean the eight-week evidence requirement is complete.
 
 ## Data retention
 

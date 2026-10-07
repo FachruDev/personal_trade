@@ -41,15 +41,27 @@ async def lifespan(app: FastAPI):
         await connection.execute(CREATE_NEWS_TABLE)
     app.state.global_shadow_refresh_task = None
     app.state.orderbook_shadow_refresh_task = None
+    app.state.macro_shadow_refresh_task = None
+    app.state.news_shadow_refresh_task = None
     app.state.paper_run_heartbeat_task = None
     if settings.global_shadow_refresh_seconds > 0:
         app.state.global_shadow_refresh_task = asyncio.create_task(global_shadow_refresh_loop())
     if settings.orderbook_shadow_refresh_seconds > 0:
         app.state.orderbook_shadow_refresh_task = asyncio.create_task(orderbook_shadow_refresh_loop())
+    if optional_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds):
+        app.state.macro_shadow_refresh_task = asyncio.create_task(macro_shadow_refresh_loop())
+    if optional_shadow_scheduler_enabled(settings.news_api_key, settings.news_shadow_refresh_seconds):
+        app.state.news_shadow_refresh_task = asyncio.create_task(news_shadow_refresh_loop())
     if settings.trading_environment == "paper" and settings.paper_run_heartbeat_seconds > 0:
         app.state.paper_run_heartbeat_task = asyncio.create_task(paper_run_heartbeat_loop())
     yield
-    for task in (app.state.global_shadow_refresh_task, app.state.orderbook_shadow_refresh_task, app.state.paper_run_heartbeat_task):
+    for task in (
+        app.state.global_shadow_refresh_task,
+        app.state.orderbook_shadow_refresh_task,
+        app.state.macro_shadow_refresh_task,
+        app.state.news_shadow_refresh_task,
+        app.state.paper_run_heartbeat_task,
+    ):
         if task is None:
             continue
         task.cancel()
@@ -77,6 +89,21 @@ def normalize_audit_event(row: dict) -> dict:
             payload = {"raw": payload}
     return {**row, "payload": payload if isinstance(payload, dict) else {"raw": payload}}
 
+
+def provider_error_payload(source: str, exc: Exception) -> dict[str, str | int]:
+    """Keep provider diagnostics useful without persisting request secrets."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        request = exc.request
+        endpoint = f"{request.url.scheme}://{request.url.host}{request.url.path}"
+        return {
+            "source": source,
+            "error_type": "http_status",
+            "status_code": exc.response.status_code,
+            "detail": f"Provider returned HTTP {exc.response.status_code} from {endpoint}",
+        }
+    if isinstance(exc, httpx.HTTPError):
+        return {"source": source, "error_type": type(exc).__name__, "detail": "Provider network request failed"}
+    return {"source": source, "error_type": type(exc).__name__, "detail": "Provider returned an invalid response"}
 
 def context_stale_after_seconds(source: str, context_type: str) -> int:
     """Set a conservative display/analysis freshness window for shadow inputs."""
@@ -131,11 +158,15 @@ def summarize_decision_events(events: list[dict]) -> dict:
     }
 
 
+def optional_shadow_scheduler_enabled(api_key: str, refresh_seconds: int) -> bool:
+    """Only call optional providers when a key and an explicit cadence exist."""
+    return bool(api_key.strip()) and refresh_seconds > 0
+
 async def refresh_global_context_from_provider() -> dict:
     try:
         context = await fetch_global_market_context(settings.coingecko_base_url, settings.coingecko_api_key or None)
     except GLOBAL_CONTEXT_PROVIDER_ERRORS as exc:
-        await record_event("market_context_refresh_failed", {"source": "coingecko", "detail": str(exc)})
+        await record_event("market_context_refresh_failed", provider_error_payload("coingecko", exc))
         raise
     payload = context.as_dict()
     await store_context("coingecko", "global", payload, context.observed_at)
@@ -163,11 +194,68 @@ async def global_shadow_refresh_loop() -> None:
         await asyncio.sleep(settings.global_shadow_refresh_seconds)
 
 
+async def refresh_macro_context_from_provider() -> dict:
+    try:
+        context = await fetch_macro_context(settings.fred_base_url, settings.fred_api_key)
+    except httpx.HTTPError as exc:
+        await record_event("macro_context_refresh_failed", provider_error_payload("fred", exc))
+        raise
+    payload = context.as_dict()
+    await store_context("fred", "macro", payload, context.observed_at)
+    await record_event("macro_context_refreshed", {"source": "fred", **payload})
+    return payload
+
+
+async def macro_shadow_refresh_loop() -> None:
+    latest = await latest_context("fred", "macro")
+    last_observed_at = latest["observed_at"] if latest else None
+    delay = next_shadow_refresh_delay(last_observed_at, settings.macro_shadow_refresh_seconds, datetime.now(timezone.utc))
+    if delay:
+        await asyncio.sleep(delay)
+    while True:
+        try:
+            await refresh_macro_context_from_provider()
+        except Exception:
+            # Macro data is optional shadow context and must never affect execution.
+            pass
+        await asyncio.sleep(settings.macro_shadow_refresh_seconds)
+
+
+async def latest_news_collected_at() -> datetime | None:
+    async with app.state.database.acquire() as connection:
+        return await connection.fetchval("SELECT MAX(collected_at) FROM news_headlines")
+
+
+async def refresh_news_headlines_from_provider() -> dict:
+    try:
+        headlines = await fetch_crypto_headlines(settings.news_api_base_url, settings.news_api_key)
+    except httpx.HTTPError as exc:
+        await record_event("news_refresh_failed", provider_error_payload("newsapi", exc))
+        raise
+    stored = await store_headlines(headlines)
+    payload = {"source": "newsapi", "received": len(headlines), "stored": stored}
+    await record_event("news_headlines_refreshed", payload)
+    return {"status": "refreshed", "mode": "shadow", **payload, "headlines": [headline.as_dict() for headline in headlines]}
+
+
+async def news_shadow_refresh_loop() -> None:
+    last_observed_at = await latest_news_collected_at()
+    delay = next_shadow_refresh_delay(last_observed_at, settings.news_shadow_refresh_seconds, datetime.now(timezone.utc))
+    if delay:
+        await asyncio.sleep(delay)
+    while True:
+        try:
+            await refresh_news_headlines_from_provider()
+        except Exception:
+            # Headlines are advisory and never change trading execution.
+            pass
+        await asyncio.sleep(settings.news_shadow_refresh_seconds)
+
 async def refresh_orderbook_context_from_provider() -> dict:
     try:
         context = await fetch_orderbook_context(settings.binance_public_base_url)
     except GLOBAL_CONTEXT_PROVIDER_ERRORS as exc:
-        await record_event("orderbook_context_refresh_failed", {"source": "binance", "detail": str(exc)})
+        await record_event("orderbook_context_refresh_failed", provider_error_payload("binance", exc))
         raise
     payload = context.as_dict()
     await store_context("binance", "orderbook", payload, context.observed_at)
@@ -239,6 +327,15 @@ async def latest_paper_run_heartbeat() -> dict | None:
     return dict(row) if row is not None else None
 
 
+def paper_run_interruption_payload(last_observed_at: datetime, now: datetime) -> dict[str, int | str]:
+    """Make an evidence reset visible without treating it as an execution event."""
+    return {
+        "previous_heartbeat_at": last_observed_at.isoformat(),
+        "gap_seconds": int(max((now - last_observed_at).total_seconds(), 0)),
+        "continuity_gap_seconds": settings.paper_run_continuity_gap_seconds,
+        "source": "api",
+    }
+
 async def paper_run_heartbeat_loop() -> None:
     last_heartbeat = await latest_paper_run_heartbeat()
     last_observed_at = last_heartbeat["created_at"] if last_heartbeat else None
@@ -248,7 +345,17 @@ async def paper_run_heartbeat_loop() -> None:
         settings.paper_run_heartbeat_seconds,
         datetime.now(timezone.utc),
     )
-    if identity_changed:
+    interrupted = (
+        last_observed_at is not None
+        and (datetime.now(timezone.utc) - last_observed_at).total_seconds() > settings.paper_run_continuity_gap_seconds
+    )
+    if interrupted:
+        await record_event(
+            "paper_run_continuity_interrupted",
+            paper_run_interruption_payload(last_observed_at, datetime.now(timezone.utc)),
+        )
+        delay = 0.0
+    elif identity_changed:
         delay = 0.0
     if delay:
         await asyncio.sleep(delay)
@@ -302,6 +409,30 @@ async def latest_context(source: str, context_type: str) -> dict | None:
         "stale_after_seconds": stale_after_seconds,
         "context": json.loads(payload) if isinstance(payload, str) else payload,
     }
+
+
+async def latest_provider_failure(event_type: str) -> datetime | None:
+    """Expose a failed optional refresh as a safe operational status only."""
+    async with app.state.database.acquire() as connection:
+        return await connection.fetchval(
+            "SELECT created_at FROM bot_audit_events WHERE event_type = $1 ORDER BY id DESC LIMIT 1",
+            event_type,
+        )
+
+
+def shadow_collection_status(
+    enabled: bool,
+    last_success_at: datetime | None,
+    last_failure_at: datetime | None,
+) -> str:
+    """Describe collection health without exposing provider response contents."""
+    if not enabled:
+        return "disabled"
+    if last_failure_at is not None and (last_success_at is None or last_failure_at >= last_success_at):
+        return "unavailable"
+    if last_success_at is not None:
+        return "collecting"
+    return "waiting"
 
 
 def orderbook_collection_projection(
@@ -592,8 +723,12 @@ async def bot_status() -> dict:
             response = await client.get(f"{settings.freqtrade_api_url}/api/v1/status", headers=await freqtrade_headers(client))
             response.raise_for_status()
             return {"mode": settings.trading_environment, "freqtrade": response.json()}
-    except httpx.HTTPError as exc:
-        return {"mode": settings.trading_environment, "freqtrade": "unavailable", "detail": str(exc)}
+    except httpx.HTTPError:
+        return {
+            "mode": settings.trading_environment,
+            "freqtrade": "unavailable",
+            "detail": "Freqtrade control API unavailable",
+        }
 
 
 @app.get("/v1/bot/performance")
@@ -604,8 +739,12 @@ async def bot_performance() -> dict:
             response = await client.get(f"{settings.freqtrade_api_url}/api/v1/profit", headers=await freqtrade_headers(client))
             response.raise_for_status()
             return {"status": "available", "mode": settings.trading_environment, "performance": response.json()}
-    except httpx.HTTPError as exc:
-        return {"status": "unavailable", "mode": settings.trading_environment, "detail": str(exc)}
+    except httpx.HTTPError:
+        return {
+            "status": "unavailable",
+            "mode": settings.trading_environment,
+            "detail": "Freqtrade control API unavailable",
+        }
 
 
 @app.get("/v1/operational-state")
@@ -617,6 +756,25 @@ async def operational_state() -> dict:
         "freqtrade_reachable": bot["freqtrade"] != "unavailable",
     }
 
+
+def paper_run_progress(first_observed_at: datetime | None, now: datetime) -> dict[str, float | datetime | None]:
+    """Report elapsed evidence separately from heartbeat cadence coverage."""
+    if first_observed_at is None:
+        return {
+            "elapsed_days": 0.0,
+            "progress_ratio": 0.0,
+            "remaining_days": float(settings.paper_run_required_days),
+            "estimated_ready_at": None,
+        }
+    elapsed_seconds = max((now - first_observed_at).total_seconds(), 0)
+    required_seconds = settings.paper_run_required_days * 86_400
+    elapsed_days = elapsed_seconds / 86_400
+    return {
+        "elapsed_days": elapsed_days,
+        "progress_ratio": min(elapsed_seconds / required_seconds, 1.0) if required_seconds else 1.0,
+        "remaining_days": max(settings.paper_run_required_days - elapsed_days, 0.0),
+        "estimated_ready_at": first_observed_at + timedelta(seconds=required_seconds),
+    }
 
 def paper_run_status(
     observations: int, first_observed_at: datetime | None, last_observed_at: datetime | None, now: datetime
@@ -678,12 +836,17 @@ async def paper_run_summary() -> dict:
     duration_seconds = max((now - first_observed_at).total_seconds(), 0) if first_observed_at else 0
     expected_observations = int(duration_seconds // settings.paper_run_heartbeat_seconds) + 1 if first_observed_at else 0
     coverage_ratio = min(len(segment) / expected_observations, 1.0) if expected_observations else None
+    progress = paper_run_progress(first_observed_at, now)
     return {
         "status": paper_run_status(len(segment), first_observed_at, last_observed_at, now),
         "observations": len(segment),
         "expected_observations": expected_observations,
         "coverage_ratio": coverage_ratio,
         "required_days": settings.paper_run_required_days,
+        "elapsed_days": progress["elapsed_days"],
+        "progress_ratio": progress["progress_ratio"],
+        "remaining_days": progress["remaining_days"],
+        "estimated_ready_at": progress["estimated_ready_at"],
         "first_observed_at": first_observed_at,
         "last_observed_at": last_observed_at,
         "strategy": identity[0] if identity else None,
@@ -772,7 +935,7 @@ async def binance_market_status() -> dict:
             "clock_synchronized": False,
             "detail": "Binance public market data unavailable",
         }
-        await record_event("binance_market_connectivity_failed", {"detail": str(exc)})
+        await record_event("binance_market_connectivity_failed", provider_error_payload("binance", exc))
     await app.state.redis.set(cache_key, json.dumps(result), ex=60)
     return result
 
@@ -907,6 +1070,52 @@ async def context_shadow_snapshot() -> dict:
     }
 
 
+@app.get("/v1/context/collection-status")
+async def shadow_collection_status_endpoint() -> dict:
+    """Return local-only scheduler health for audit and research operations."""
+    global_context, macro_context, orderbook_context, news_collected_at, global_failure, macro_failure, orderbook_failure, news_failure = await asyncio.gather(
+        latest_context("coingecko", "global"),
+        latest_context("fred", "macro"),
+        latest_context("binance", "orderbook"),
+        latest_news_collected_at(),
+        latest_provider_failure("market_context_refresh_failed"),
+        latest_provider_failure("macro_context_refresh_failed"),
+        latest_provider_failure("orderbook_context_refresh_failed"),
+        latest_provider_failure("news_refresh_failed"),
+    )
+
+    def source(enabled: bool, cadence_seconds: int, context: dict | None, failure_at: datetime | None) -> dict:
+        success_at = context.get("observed_at") if context is not None else None
+        return {
+            "enabled": enabled,
+            "cadence_seconds": cadence_seconds,
+            "status": shadow_collection_status(enabled, success_at, failure_at),
+            "last_success_at": success_at,
+            "last_failure_at": failure_at,
+        }
+
+    return {
+        "mode": "shadow",
+        "sources": {
+            "global_market": source(settings.global_shadow_refresh_seconds > 0, settings.global_shadow_refresh_seconds, global_context, global_failure),
+            "macro": source(optional_shadow_scheduler_enabled(settings.fred_api_key, settings.macro_shadow_refresh_seconds), settings.macro_shadow_refresh_seconds, macro_context, macro_failure),
+            "orderbook": source(settings.orderbook_shadow_refresh_seconds > 0, settings.orderbook_shadow_refresh_seconds, orderbook_context, orderbook_failure),
+            "news": {
+                "enabled": optional_shadow_scheduler_enabled(settings.news_api_key, settings.news_shadow_refresh_seconds),
+                "cadence_seconds": settings.news_shadow_refresh_seconds,
+                "status": shadow_collection_status(
+                    optional_shadow_scheduler_enabled(settings.news_api_key, settings.news_shadow_refresh_seconds),
+                    news_collected_at,
+                    news_failure,
+                ),
+                "last_success_at": news_collected_at,
+                "last_failure_at": news_failure,
+            },
+        },
+        "execution_effect": "none",
+    }
+
+
 @app.get("/v1/research/experiments")
 async def research_experiments() -> dict:
     """Expose experiment intent and gate requirements to the local cockpit."""
@@ -963,7 +1172,17 @@ async def refresh_global_context(x_bot_control_token: str | None = Header(defaul
 @app.get("/v1/context/macro")
 async def macro_context() -> dict:
     context = await latest_context("fred", "macro")
-    return context or {"status": "not_collected", "mode": "shadow"}
+    if context is not None:
+        return context
+    last_failure_at = await latest_provider_failure("macro_context_refresh_failed")
+    if last_failure_at is not None:
+        return {
+            "status": "unavailable",
+            "mode": "shadow",
+            "detail": "FRED belum dapat menyegarkan data. Periksa FRED_API_KEY pada konfigurasi lokal.",
+            "last_attempt_at": last_failure_at,
+        }
+    return {"status": "not_collected", "mode": "shadow"}
 
 
 @app.post("/v1/context/macro/refresh")
@@ -973,13 +1192,9 @@ async def refresh_macro_context(x_bot_control_token: str | None = Header(default
     if not settings.fred_api_key:
         raise HTTPException(status_code=409, detail="FRED_API_KEY is not configured")
     try:
-        context = await fetch_macro_context(settings.fred_base_url, settings.fred_api_key)
+        payload = await refresh_macro_context_from_provider()
     except httpx.HTTPError as exc:
-        await record_event("macro_context_refresh_failed", {"source": "fred", "detail": str(exc)})
         raise HTTPException(status_code=503, detail="Macro context provider unavailable") from exc
-    payload = context.as_dict()
-    await store_context("fred", "macro", payload, context.observed_at)
-    await record_event("macro_context_refreshed", {"source": "fred", **payload})
     return {"status": "refreshed", "context": payload}
 
 
@@ -1000,13 +1215,9 @@ async def refresh_news_headlines(x_bot_control_token: str | None = Header(defaul
     if not settings.news_api_key:
         raise HTTPException(status_code=409, detail="NEWS_API_KEY is not configured")
     try:
-        headlines = await fetch_crypto_headlines(settings.news_api_base_url, settings.news_api_key)
+        return await refresh_news_headlines_from_provider()
     except httpx.HTTPError as exc:
-        await record_event("news_refresh_failed", {"source": "newsapi", "detail": str(exc)})
         raise HTTPException(status_code=503, detail="News provider unavailable") from exc
-    stored = await store_headlines(headlines)
-    await record_event("news_headlines_refreshed", {"source": "newsapi", "received": len(headlines), "stored": stored})
-    return {"status": "refreshed", "mode": "shadow", "received": len(headlines), "stored": stored, "headlines": [headline.as_dict() for headline in headlines]}
 
 
 @app.get("/v1/ai/shadow/latest")
@@ -1026,7 +1237,7 @@ async def analyze_ai_shadow(request: ShadowAnalysisRequest, x_bot_control_token:
     try:
         assessment = await run_ai_shadow_analysis(request)
     except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as exc:
-        await record_event("ai_shadow_analysis_failed", {"provider": provider, "detail": str(exc)})
+        await record_event("ai_shadow_analysis_failed", {"provider": provider, **provider_error_payload(provider, exc)})
         raise HTTPException(status_code=503, detail="AI shadow provider unavailable or returned invalid JSON") from exc
     payload = await save_ai_shadow_assessment(request, assessment, "operator_headlines")
     return {"status": "recorded", "assessment": payload}
@@ -1049,7 +1260,7 @@ async def analyze_latest_news(x_bot_control_token: str | None = Header(default=N
     try:
         assessment = await run_ai_shadow_analysis(request)
     except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as exc:
-        await record_event("ai_shadow_analysis_failed", {"provider": provider, "input_source": "latest_news", "detail": str(exc)})
+        await record_event("ai_shadow_analysis_failed", {"provider": provider, "input_source": "latest_news", **provider_error_payload(provider, exc)})
         raise HTTPException(status_code=503, detail="AI shadow provider unavailable or returned invalid JSON") from exc
     payload = await save_ai_shadow_assessment(request, assessment, "latest_news")
     return {"status": "recorded", "assessment": payload}

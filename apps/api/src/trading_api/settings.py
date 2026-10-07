@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     news_api_base_url: str = "https://newsapi.org/v2"
     ai_shadow_min_interval_seconds: int = 900
     global_shadow_refresh_seconds: int = 900
+    macro_shadow_refresh_seconds: int = 21_600
+    news_shadow_refresh_seconds: int = 3_600
     orderbook_shadow_refresh_seconds: int = 300
     orderbook_shadow_min_observations: int = 8064
     orderbook_shadow_continuity_gap_seconds: int = 3600

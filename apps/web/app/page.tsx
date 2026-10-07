@@ -13,8 +13,9 @@ type OrderBookCoverage = { status: string; observations: number; minimum_observa
 type OrderBookResearch = { status: string; mode: string; coverage: OrderBookCoverage; pairs: string[]; horizons_minutes: number[]; evaluations: Array<{ pair: string; horizon_minutes: number; summary: Record<string, { samples: number; mean_return_bps: number | null; positive_rate: number | null }> }> };
 type NewsHeadlines = { mode: string; headlines: Array<{ title: string; source: string; url: string; published_at?: string | null }> };
 type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; clock_drift_seconds?: number; clock_synchronized?: boolean; detail?: string };
-type ReleaseReadiness = { ready: boolean; environment: string; checks: Array<{ key: string; passed: boolean; detail: string }>; paper_run?: { status: string; observations: number; expected_observations: number; coverage_ratio?: number | null; required_days: number; first_observed_at?: string | null; strategy?: string | null; profile?: string | null; revision?: string | null; source_sha256?: string | null } };
-type MacroContext = ShadowFreshness & { context?: { series?: Record<string, { value?: number | null; date?: string | null }> } };
+type ReleaseReadiness = { ready: boolean; environment: string; checks: Array<{ key: string; passed: boolean; detail: string }>; paper_run?: { status: string; observations: number; expected_observations: number; coverage_ratio?: number | null; required_days: number; elapsed_days?: number; progress_ratio?: number; remaining_days?: number; estimated_ready_at?: string | null; first_observed_at?: string | null; strategy?: string | null; profile?: string | null; revision?: string | null; source_sha256?: string | null } };
+type MacroContext = ShadowFreshness & { detail?: string; last_attempt_at?: string; context?: { series?: Record<string, { value?: number | null; date?: string | null }> } };
+type ShadowCollectionStatus = { mode: string; execution_effect: string; sources: Record<string, { enabled: boolean; cadence_seconds: number; status: string; last_success_at?: string | null; last_failure_at?: string | null }> };
 type AiShadow = ShadowFreshness & { assessment?: { market_bias: string; confidence: number; risk_level: string; trade_support: boolean; event_summary: string; provider: string; model: string; input_source?: string } };
 type ContextFusion = { recommendation: { decision: string; risk_multiplier: number; reasons: string[]; mode: string }; inputs_available: { global_market: boolean; macro: boolean; ai: boolean }; stale_inputs?: { global_market: boolean; macro: boolean; ai: boolean } };
 type Decision = { id: number; event_type: string; payload: Record<string, unknown>; created_at: string };
@@ -35,6 +36,7 @@ type DashboardState = {
   orderBookCoverage: OrderBookCoverage | null;
   orderBookResearch: OrderBookResearch | null;
   macroContext: MacroContext | null;
+  collectionStatus: ShadowCollectionStatus | null;
   aiShadow: AiShadow | null;
   contextFusion: ContextFusion | null;
   research: ResearchExperiments | null;
@@ -44,7 +46,7 @@ type DashboardState = {
   updatedAt: Date | null;
 };
 
-const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, releaseReadiness: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, orderBookResearch: null, macroContext: null, aiShadow: null, contextFusion: null, research: null, decisionSummary: null, decisions: [], error: null, updatedAt: null };
+const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, releaseReadiness: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, orderBookResearch: null, macroContext: null, collectionStatus: null, aiShadow: null, contextFusion: null, research: null, decisionSummary: null, decisions: [], error: null, updatedAt: null };
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
@@ -122,6 +124,11 @@ function contextAge(context: ShadowFreshness | null | undefined) {
   return `${(context.age_seconds / 3_600).toFixed(1)} jam lalu`;
 }
 
+function collectionStatusLabel(status: string) {
+  const labels: Record<string, string> = { collecting: "Aktif", waiting: "Menunggu", unavailable: "Perlu perhatian", disabled: "Dimatikan" };
+  return labels[status] ?? status.replaceAll("_", " ");
+}
+
 function orderBookReadyEstimate(coverage: OrderBookCoverage | null) {
   if (!coverage) return "—";
   if (coverage.status === "ready_for_research") return "Siap dievaluasi";
@@ -134,6 +141,11 @@ function numberFrom(payload: Record<string, unknown>, key: string) {
 }
 
 function auditSummary(decision: Decision) {
+  if (decision.event_type === "paper_run_continuity_interrupted") {
+    const gapSeconds = numberFrom(decision.payload, "gap_seconds");
+    const gapMinutes = gapSeconds === null ? null : Math.ceil(gapSeconds / 60);
+    return [gapMinutes === null ? "Kontinuitas paper run terputus; segmen bukti baru akan dimulai." : `Kontinuitas paper run terputus selama ${gapMinutes} menit; segmen bukti baru dimulai.`];
+  }
   const payload = decision.payload;
   const pair = typeof payload.pair === "string" ? payload.pair : null;
   const reason = typeof payload.reason === "string" ? humanizeReason(payload.reason) : null;
@@ -175,7 +187,7 @@ export default function Home() {
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, releaseReadinessResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, orderBookResearchResponse, macroResponse, aiShadowResponse, fusionResponse, researchResponse, decisionSummaryResponse, decisionsResponse] = await Promise.all([
+      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, releaseReadinessResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, orderBookResearchResponse, macroResponse, collectionStatusResponse, aiShadowResponse, fusionResponse, researchResponse, decisionSummaryResponse, decisionsResponse] = await Promise.all([
         fetch("/api/trading/health", { cache: "no-store" }),
         fetch("/api/trading/v1/bot/status", { cache: "no-store" }),
         fetch("/api/trading/v1/operational-state", { cache: "no-store" }),
@@ -188,16 +200,17 @@ export default function Home() {
         fetch("/api/trading/v1/context/orderbook/coverage", { cache: "no-store" }),
         fetch("/api/trading/v1/research/orderbook/report", { cache: "no-store" }),
         fetch("/api/trading/v1/context/macro", { cache: "no-store" }),
+        fetch("/api/trading/v1/context/collection-status", { cache: "no-store" }),
         fetch("/api/trading/v1/ai/shadow/latest", { cache: "no-store" }),
         fetch("/api/trading/v1/context/fusion", { cache: "no-store" }),
         fetch("/api/trading/v1/research/experiments", { cache: "no-store" }),
         fetch("/api/trading/v1/decisions/summary", { cache: "no-store" }),
         fetch("/api/trading/v1/decisions", { cache: "no-store" }),
       ]);
-      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !releaseReadinessResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !orderBookResearchResponse.ok || !macroResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !researchResponse.ok || !decisionSummaryResponse.ok || !decisionsResponse.ok) {
+      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !releaseReadinessResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !orderBookResearchResponse.ok || !macroResponse.ok || !collectionStatusResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !researchResponse.ok || !decisionSummaryResponse.ok || !decisionsResponse.ok) {
         throw new Error("Dashboard belum dapat mengambil data dari control API.");
       }
-      const [health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, aiShadow, contextFusion, research, decisionSummary, decisions] = (await Promise.all([
+      const [health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions] = (await Promise.all([
         healthResponse.json(),
         botResponse.json(),
         operationsResponse.json(),
@@ -210,13 +223,14 @@ export default function Home() {
         orderBookCoverageResponse.json(),
         orderBookResearchResponse.json(),
         macroResponse.json(),
+        collectionStatusResponse.json(),
         aiShadowResponse.json(),
         fusionResponse.json(),
         researchResponse.json(),
         decisionSummaryResponse.json(),
         decisionsResponse.json(),
-      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, ReleaseReadiness, GlobalContext, OrderBookContext, OrderBookCoverage, OrderBookResearch, MacroContext, AiShadow, ContextFusion, ResearchExperiments, DecisionSummary, Decision[]];
-      setState({ health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, aiShadow, contextFusion, research, decisionSummary, decisions, error: null, updatedAt: new Date() });
+      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, ReleaseReadiness, GlobalContext, OrderBookContext, OrderBookCoverage, OrderBookResearch, MacroContext, ShadowCollectionStatus, AiShadow, ContextFusion, ResearchExperiments, DecisionSummary, Decision[]];
+      setState({ health, bot, operations, performance, news, binanceMarket, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions, error: null, updatedAt: new Date() });
     } catch {
       setState((current) => ({
         ...current,
@@ -267,7 +281,7 @@ export default function Home() {
       <section className="status-grid" aria-label="Ringkasan kondisi bot">
         <StatusCard label="Control API" value={connected ? "Terhubung" : "Memuat"} detail="PostgreSQL dan Redis diperiksa oleh health check." active={connected} />
         <StatusCard label="Freqtrade" value={botState(state.bot)} detail="Execution engine Binance Spot." active={state.operations?.freqtrade_reachable === true} />
-        <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"} · Jam ${state.binanceMarket.clock_drift_seconds == null ? "—" : `${state.binanceMarket.clock_drift_seconds.toFixed(2)} dtk`}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true && state.binanceMarket?.clock_synchronized !== false} />
+        <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"} · Jam ${state.binanceMarket.clock_drift_seconds == null ? "—" : `${state.binanceMarket.clock_drift_seconds.toFixed(2)} dtk`}${state.binanceMarket.clock_synchronized === false ? " · perlu sinkronisasi sebelum rilis" : ""}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true && state.binanceMarket?.clock_synchronized !== false} />
         <StatusCard label="Pasangan awal" value="BTC / ETH" detail="BTC/USDT dan ETH/USDT, signal 1H dan regime 4H." />
         <StatusCard label="Kill-switch" value={state.operations?.kill_switch_enabled ? "Aktif" : "Siap"} detail={state.operations?.kill_switch_enabled ? "Entry baru diblokir oleh API." : "Tidak ada blokir entry aktif."} active={!state.operations?.kill_switch_enabled} />
       </section>
@@ -281,7 +295,7 @@ export default function Home() {
         <ul className="check-list">
           {(state.releaseReadiness?.checks ?? []).map((check) => <li key={check.key} className={`release-check ${check.passed ? "passed" : "pending"}`}>{check.detail}</li>)}
         </ul>
-        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {humanizeRunStatus(state.releaseReadiness.paper_run.status)} · target {state.releaseReadiness.paper_run.required_days} hari{state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}% lengkap`} · revisi {state.releaseReadiness.paper_run.revision ?? "belum tercatat"} · source {state.releaseReadiness.paper_run.source_sha256?.slice(0, 12) ?? "belum tercatat"}</p> : null}
+        {state.binanceMarket?.clock_synchronized === false ? <p className="notice notice-error">Jam Windows berbeda {state.binanceMarket.clock_drift_seconds?.toFixed(2) ?? "—"} detik dari Binance. Sebelum rilis, buka pengaturan Waktu & bahasa Windows lalu sinkronkan waktu secara otomatis.</p> : null}        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {humanizeRunStatus(state.releaseReadiness.paper_run.status)} · bukti {((state.releaseReadiness.paper_run.progress_ratio ?? 0) * 100).toFixed(1)}% ({(state.releaseReadiness.paper_run.elapsed_days ?? 0).toFixed(1)} / {state.releaseReadiness.paper_run.required_days} hari){state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · cadence ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}%`}{state.releaseReadiness.paper_run.estimated_ready_at ? ` · estimasi ${formatDate(state.releaseReadiness.paper_run.estimated_ready_at)}` : ""} · revisi {state.releaseReadiness.paper_run.revision ?? "belum tercatat"} · source {state.releaseReadiness.paper_run.source_sha256?.slice(0, 12) ?? "belum tercatat"}</p> : null}
       </section>
 
       <section className="panel">
@@ -344,6 +358,24 @@ export default function Home() {
 
       <section className="panel">
         <div className="panel-heading">
+          <div><p className="eyebrow">Research operations</p><h2>Status pengumpul data</h2></div>
+          <span className="event-count">Shadow only</span>
+        </div>
+        <p className="subheading">Status ini memantau koleksi data riset. Tidak satu pun sumber dapat memengaruhi entry, ukuran posisi, stop, atau exit.</p>
+        {state.collectionStatus ? (
+          <dl className="detail-list">
+            {Object.entries(state.collectionStatus.sources).map(([source, status]) => (
+              <div key={source}>
+                <dt>{source.replaceAll("_", " ")}</dt>
+                <dd>{collectionStatusLabel(status.status)} · {status.enabled ? `setiap ${Math.max(Math.round(status.cadence_seconds / 60), 1)} menit` : "scheduler dimatikan"}{status.last_success_at ? ` · sukses ${formatDate(status.last_success_at)}` : ""}{status.last_failure_at ? ` · percobaan gagal ${formatDate(status.last_failure_at)}` : ""}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : <div className="empty-state"><p>Memuat status pengumpul data.</p></div>}
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
           <div><p className="eyebrow">Market context</p><h2>Global market shadow</h2></div>
           <span className="event-count">{state.globalContext?.status === "stale" ? "Data terlambat" : state.globalContext?.context?.regime ?? "Belum tersedia"}</span>
         </div>
@@ -373,7 +405,7 @@ export default function Home() {
             ))}
             <div><dt>Status data</dt><dd>{contextLabel(state.orderBookContext)} · {contextAge(state.orderBookContext)}</dd></div>
             <div><dt>Snapshot</dt><dd>{state.orderBookContext.observed_at ? formatDate(state.orderBookContext.observed_at) : "—"}</dd></div>
-            <div><dt>Kesiapan riset</dt><dd>{state.orderBookCoverage ? `${state.orderBookCoverage.observations} / ${state.orderBookCoverage.minimum_observations} snapshot · ${state.orderBookCoverage.status.replaceAll("_", " ")}${state.orderBookCoverage.coverage_ratio == null ? "" : ` · ${(state.orderBookCoverage.coverage_ratio * 100).toFixed(1)}% lengkap`}` : "—"}</dd></div>
+            <div><dt>Kesiapan riset</dt><dd>{state.orderBookCoverage ? `${state.orderBookCoverage.observations} / ${state.orderBookCoverage.minimum_observations} snapshot · ${state.orderBookCoverage.status.replaceAll("_", " ")}${state.orderBookCoverage.coverage_ratio == null ? "" : ` · cadence ${(state.orderBookCoverage.coverage_ratio * 100).toFixed(1)}%`}` : "—"}</dd></div>
             <div><dt>Proyeksi koleksi</dt><dd>{orderBookReadyEstimate(state.orderBookCoverage)}</dd></div>
             <div><dt>Batas outage</dt><dd>{state.orderBookCoverage?.continuity_gap_seconds ? `${Math.floor(state.orderBookCoverage.continuity_gap_seconds / 60)} menit tanpa snapshot akan memulai segmen riset baru.` : "—"}</dd></div>
           </dl>
@@ -400,7 +432,7 @@ export default function Home() {
               ))}
               <div><dt>Status data</dt><dd>{contextLabel(state.macroContext)} · {contextAge(state.macroContext)}</dd></div>
             </dl>
-          ) : <div className="empty-state"><p>Belum ada snapshot macro.</p><span>Macro dicatat sebagai konteks dan belum memengaruhi transaksi.</span></div>}
+          ) : <div className="empty-state"><p>{state.macroContext?.status === "unavailable" ? "Macro belum dapat diperbarui." : "Belum ada snapshot macro."}</p><span>{state.macroContext?.detail ?? "Macro dicatat sebagai konteks dan belum memengaruhi transaksi."}</span>{state.macroContext?.last_attempt_at ? <span>Percobaan terakhir: {formatDate(state.macroContext.last_attempt_at)}</span> : null}</div>}
         </article>
 
         <article className="panel">
@@ -457,9 +489,9 @@ export default function Home() {
       <section className="panel decisions-panel">
         <div className="panel-heading">
           <div><p className="eyebrow">Entry explanation</p><h2>Mengapa bot belum membeli?</h2></div>
-          <span className="event-count">{state.decisionSummary?.events_observed ?? 0} event</span>
+          <span className="event-count">{state.decisionSummary?.events_observed ?? 0} event dianalisis</span>
         </div>
-        <p className="subheading">Ringkasan ini berasal dari keputusan terbaru Freqtrade. Data shadow tidak menentukan hasil di bawah ini.</p>
+        <p className="subheading">Ringkasan ini menganalisis hingga 200 event terbaru. Data shadow tidak menentukan hasil di bawah ini.</p>
         {state.decisionSummary?.hold_reasons.length ? <>
           <div className="reason-grid">
             {state.decisionSummary.hold_reasons.slice(0, 5).map((item) => <div key={item.reason}><strong>{humanizeReason(item.reason)}</strong><span>{item.count} kali</span></div>)}
@@ -473,7 +505,7 @@ export default function Home() {
       <section className="panel decisions-panel">
         <div className="panel-heading">
           <div><p className="eyebrow">Audit trail</p><h2>Keputusan terbaru</h2></div>
-          <span className="event-count">{filteredDecisions.length} / {decisionCount} event</span>
+          <span className="event-count">{filteredDecisions.length} dari {decisionCount} event terbaru</span>
         </div>
         <div className="decision-filters" aria-label="Filter audit keputusan">
           <label>Pair<select value={decisionPair} onChange={(event) => setDecisionPair(event.target.value)}><option value="all">Semua pair</option>{decisionPairs.map((pair) => <option key={pair} value={pair}>{pair}</option>)}</select></label>

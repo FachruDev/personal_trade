@@ -26,7 +26,7 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertEqual(experiment["status"], "collecting_data")
         self.assertEqual(experiment["mode"], "shadow_only")
         self.assertIn("8,064", experiment["validation"]["gate_description"])
-        self.assertIn("No effect on orders", experiment["risk_profile"]["research"])
+        self.assertIn("Tidak memengaruhi order", experiment["risk_profile"]["research"])
     def test_decision_summary_explains_holds_by_pair_and_reason(self) -> None:
         events = [
             {"event_type": "hold", "created_at": "now", "payload": {"pair": "BTC/USDT", "regime": "bull", "rsi": 42, "failed_conditions": ["macd_not_bullish", "volume_below_average"]}},
@@ -44,6 +44,14 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertEqual(classify_global_regime(0.2), "NEUTRAL")
         self.assertEqual(classify_global_regime(None), "UNKNOWN")
 
+    def test_provider_error_payload_redacts_query_parameters(self) -> None:
+        request = httpx.Request("GET", "https://fred.example/series?api_key=secret-value")
+        response = httpx.Response(400, request=request)
+        payload = api_main.provider_error_payload("fred", httpx.HTTPStatusError("bad request", request=request, response=response))
+        self.assertEqual(payload["status_code"], 400)
+        self.assertIn("https://fred.example/series", payload["detail"])
+        self.assertNotIn("secret-value", payload["detail"])
+        self.assertNotIn("api_key", payload["detail"])
     def test_number_rejects_non_numeric_values(self) -> None:
         self.assertEqual(number(12), 12.0)
         self.assertEqual(number(1.25), 1.25)
@@ -110,6 +118,18 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=45), 300, now), 255.0)
         self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=301), 300, now), 0.0)
 
+    def test_optional_shadow_scheduler_requires_key_and_positive_interval(self) -> None:
+        self.assertTrue(api_main.optional_shadow_scheduler_enabled("key-present", 3_600))
+        self.assertFalse(api_main.optional_shadow_scheduler_enabled("", 3_600))
+        self.assertFalse(api_main.optional_shadow_scheduler_enabled("   ", 3_600))
+        self.assertFalse(api_main.optional_shadow_scheduler_enabled("key-present", 0))
+
+    def test_shadow_collection_status_only_reports_safe_operational_state(self) -> None:
+        timestamp = datetime(2026, 10, 7, 2, 0, tzinfo=timezone.utc)
+        self.assertEqual(api_main.shadow_collection_status(False, timestamp, None), "disabled")
+        self.assertEqual(api_main.shadow_collection_status(True, None, None), "waiting")
+        self.assertEqual(api_main.shadow_collection_status(True, timestamp, None), "collecting")
+        self.assertEqual(api_main.shadow_collection_status(True, timestamp, timestamp + timedelta(seconds=1)), "unavailable")
     def test_global_scheduler_uses_the_same_restart_delay_rule(self) -> None:
         now = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
         self.assertEqual(api_main.next_shadow_refresh_delay(now - timedelta(seconds=120), 900, now), 780.0)
@@ -134,6 +154,22 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertTrue(by_key["execution_engine"]["passed"])
         self.assertTrue(by_key["clock_synchronized"]["passed"])
 
+    def test_paper_run_interruption_payload_exposes_the_uncredited_gap(self) -> None:
+        previous = datetime(2026, 10, 7, 0, 0, tzinfo=timezone.utc)
+        now = previous + timedelta(minutes=31, seconds=4)
+        with patch.object(api_main.settings, "paper_run_continuity_gap_seconds", 1_800):
+            payload = api_main.paper_run_interruption_payload(previous, now)
+        self.assertEqual(payload["previous_heartbeat_at"], previous.isoformat())
+        self.assertEqual(payload["gap_seconds"], 1_864)
+        self.assertEqual(payload["continuity_gap_seconds"], 1_800)
+    def test_paper_run_progress_keeps_duration_separate_from_cadence(self) -> None:
+        start = datetime(2026, 10, 7, 0, 0, tzinfo=timezone.utc)
+        with patch.object(api_main.settings, "paper_run_required_days", 56):
+            progress = api_main.paper_run_progress(start, start + timedelta(days=7))
+        self.assertEqual(progress["elapsed_days"], 7.0)
+        self.assertEqual(progress["progress_ratio"], 0.125)
+        self.assertEqual(progress["remaining_days"], 49.0)
+        self.assertEqual(progress["estimated_ready_at"], start + timedelta(days=56))
     def test_paper_run_requires_duration_and_detects_interruption(self) -> None:
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         ready_at = start + timedelta(days=56)
@@ -204,6 +240,41 @@ class GlobalMarketContextTests(unittest.TestCase):
 
 
 class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_freqtrade_unavailability_does_not_return_transport_details(self) -> None:
+        class FailingClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def get(self, *args, **kwargs):
+                raise httpx.ConnectError("http://freqtrade.example/?token=secret")
+
+        with (
+            patch.object(api_main.httpx, "AsyncClient", return_value=FailingClient()),
+            patch.object(api_main, "freqtrade_headers", new=AsyncMock(return_value={})),
+        ):
+            status = await api_main.bot_status()
+            performance = await api_main.bot_performance()
+
+        self.assertEqual(status["detail"], "Freqtrade control API unavailable")
+        self.assertEqual(performance["detail"], "Freqtrade control API unavailable")
+        self.assertNotIn("secret", status["detail"])
+
+    async def test_macro_context_reports_a_safe_configuration_status_after_a_failed_refresh(self) -> None:
+        last_attempt = datetime(2026, 10, 7, 2, 0, tzinfo=timezone.utc)
+        with (
+            patch.object(api_main, "latest_context", new=AsyncMock(return_value=None)),
+            patch.object(api_main, "latest_provider_failure", new=AsyncMock(return_value=last_attempt)),
+        ):
+            result = await api_main.macro_context()
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["mode"], "shadow")
+        self.assertEqual(result["last_attempt_at"], last_attempt)
+        self.assertIn("FRED_API_KEY", result["detail"])
+
     async def test_orderbook_report_uses_only_the_predeclared_pairs_and_horizons(self) -> None:
         coverage = {"status": "ready_for_research", "observations": 100, "minimum_observations": 100, "coverage_ratio": 1.0}
 
@@ -259,7 +330,11 @@ class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
 
         record_event.assert_awaited_once_with(
             "market_context_refresh_failed",
-            {"source": "coingecko", "detail": "invalid payload"},
+            {
+                "source": "coingecko",
+                "error_type": "ValueError",
+                "detail": "Provider returned an invalid response",
+            },
         )
 
     async def test_malformed_orderbook_provider_payload_is_audited(self) -> None:
@@ -272,7 +347,11 @@ class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
 
         record_event.assert_awaited_once_with(
             "orderbook_context_refresh_failed",
-            {"source": "binance", "detail": "invalid order book"},
+            {
+                "source": "binance",
+                "error_type": "ValueError",
+                "detail": "Provider returned an invalid response",
+            },
         )
 
     async def test_binance_connectivity_failure_returns_safe_market_status(self) -> None:
@@ -298,7 +377,10 @@ class GlobalRefreshFailureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["pairs"], {})
         self.assertEqual(redis.key, "market:binance-connectivity")
         self.assertEqual(redis.ex, 60)
-        record_event.assert_awaited_once()
+        record_event.assert_awaited_once_with(
+            "binance_market_connectivity_failed",
+            {"source": "binance", "error_type": "ConnectError", "detail": "Provider network request failed"},
+        )
 
 
 class ShadowAssessmentTests(unittest.TestCase):
