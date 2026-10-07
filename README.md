@@ -87,7 +87,7 @@ With `NEWS_API_KEY` configured, the NewsAPI headline collector refreshes automat
 
 ## Moving to a VPS
 
-The bot's source folder alone does not contain PostgreSQL audit data, paper-run evidence, or order-book snapshots. Use [portable-state/README.md](portable-state/README.md) to export and restore a portable database package when moving hosts. Keep `.env` outside Git even for a private repository.
+The bot's source folder alone does not contain PostgreSQL audit data, paper-run evidence, or order-book snapshots. Use [portable-state/README.md](portable-state/README.md) to export and restore a portable database package when moving hosts. See [docs/vps-migration-guide.md](docs/vps-migration-guide.md) for the complete VPS checklist. Keep `.env` outside Git even for a private repository.
 
 ## Binance market status
 
