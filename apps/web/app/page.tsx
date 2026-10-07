@@ -1,617 +1,785 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-type Health = { status: string; timestamp: string };
-type BotStatus = { mode: string; freqtrade: unknown; detail?: string };
-type OperationalState = { environment: string; kill_switch_enabled: boolean; freqtrade_reachable: boolean };
-type BotPerformance = { status: string; mode: string; detail?: string; performance?: { profit_closed_coin?: number; profit_closed_percent?: number; profit_all_coin?: number; profit_all_percent?: number; trade_count?: number; closed_trade_count?: number } };
-type ShadowFreshness = { status: string; observed_at?: string; age_seconds?: number; stale_after_seconds?: number };
-type GlobalContext = ShadowFreshness & { context?: { regime?: string; market_cap_change_24h?: number | null; btc_dominance?: number | null } };
-type OrderBookContext = ShadowFreshness & { context?: { pairs?: Record<string, { mid_price?: number | null; imbalance?: number | null; spread_bps?: number | null; bid_levels?: number; ask_levels?: number }> } };
-type OrderBookCoverage = { status: string; observations: number; minimum_observations: number; coverage_ratio?: number | null; first_observed_at?: string | null; last_observed_at?: string | null; remaining_observations?: number; estimated_ready_at?: string | null; continuity_gap_seconds?: number };
-type OrderBookResearch = { status: string; mode: string; coverage: OrderBookCoverage; pairs: string[]; horizons_minutes: number[]; evaluations: Array<{ pair: string; horizon_minutes: number; summary: Record<string, { samples: number; mean_return_bps: number | null; positive_rate: number | null }> }> };
-type NewsHeadlines = { mode: string; headlines: Array<{ title: string; source: string; url: string; published_at?: string | null }> };
-type BinanceMarket = { reachable: boolean; pairs: Record<string, string>; observed_at: string; clock_drift_seconds?: number; clock_synchronized?: boolean; detail?: string };
-type MarketCandle = { opened_at: number; open: number; high: number; low: number; close: number; volume: number };
-type MarketCandles = { symbol: string; interval: string; observed_at: string; candles: MarketCandle[]; mode: string; execution_effect: string };
-type ReleaseReadiness = { ready: boolean; environment: string; checks: Array<{ key: string; passed: boolean; detail: string }>; paper_run?: { status: string; observations: number; expected_observations: number; coverage_ratio?: number | null; required_days: number; elapsed_days?: number; progress_ratio?: number; remaining_days?: number; estimated_ready_at?: string | null; first_observed_at?: string | null; strategy?: string | null; profile?: string | null; revision?: string | null; source_sha256?: string | null } };
-type MacroContext = ShadowFreshness & { detail?: string; last_attempt_at?: string; context?: { series?: Record<string, { value?: number | null; date?: string | null }> } };
-type ShadowCollectionStatus = { mode: string; execution_effect: string; sources: Record<string, { enabled: boolean; configuration_valid?: boolean; cadence_seconds: number; status: string; last_success_at?: string | null; last_failure_at?: string | null }> };
-type AiShadow = ShadowFreshness & { assessment?: { market_bias: string; confidence: number; risk_level: string; trade_support: boolean; event_summary: string; provider: string; model: string; input_source?: string } };
-type ContextFusion = { recommendation: { decision: string; risk_multiplier: number; reasons: string[]; mode: string }; inputs_available: { global_market: boolean; macro: boolean; ai: boolean }; stale_inputs?: { global_market: boolean; macro: boolean; ai: boolean } };
-type Decision = { id: number; event_type: string; payload: Record<string, unknown>; created_at: string };
-type DecisionSummary = { events_observed: number; event_counts: Record<string, number>; hold_reasons: Array<{ reason: string; count: number }>; latest_by_pair: Record<string, { event_type: string; created_at: string; regime?: string; rsi?: number; adx_4h?: number; failed_conditions?: string[] }> };
-type ResearchExperiment = { label: string; strategy: string; status: string; mode: string; pairs: string[]; timeframes: { entry: string; trend: string }; hypothesis: string; entry_summary: string[]; risk_profile: { research: string; promotion: string }; validation: { periods: string[]; required_profit_factor: number; required_positive_expectancy: boolean; required_trades_per_period: number; maximum_drawdown_percent: number; integrity_checks: string[]; gate_description?: string; result?: { passes: boolean; reason: string; development: ResearchPeriod; validation: ResearchPeriod; out_of_sample: ResearchPeriod } }; context_policy: string };
-type ResearchPeriod = { trades: number; profit_factor: number; return_percent: number; maximum_drawdown_percent: number };
-type ResearchExperiments = { experiments: ResearchExperiment[] };
-type DashboardState = {
-  health: Health | null;
-  bot: BotStatus | null;
-  operations: OperationalState | null;
-  performance: BotPerformance | null;
-  news: NewsHeadlines | null;
-  binanceMarket: BinanceMarket | null;
-  marketCandles: MarketCandles | null;
-  releaseReadiness: ReleaseReadiness | null;
-  globalContext: GlobalContext | null;
-  orderBookContext: OrderBookContext | null;
-  orderBookCoverage: OrderBookCoverage | null;
-  orderBookResearch: OrderBookResearch | null;
-  macroContext: MacroContext | null;
-  collectionStatus: ShadowCollectionStatus | null;
-  aiShadow: AiShadow | null;
-  contextFusion: ContextFusion | null;
-  research: ResearchExperiments | null;
-  decisionSummary: DecisionSummary | null;
+type Candle = { opened_at: number; close: number };
+type Decision = {
+  id: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+type Data = {
+  health: { status: string } | null;
+  operations: {
+    kill_switch_enabled: boolean;
+    freqtrade_reachable: boolean;
+  } | null;
+  performance: {
+    performance?: {
+      profit_all_coin?: number;
+      profit_all_percent?: number;
+      trade_count?: number;
+      closed_trade_count?: number;
+    };
+  } | null;
+  candles: { observed_at: string; candles: Candle[] } | null;
+  market: { pairs: Record<string, string> } | null;
+  summary: {
+    events_observed: number;
+    hold_reasons: Array<{ reason: string; count: number }>;
+    latest_by_pair: Record<
+      string,
+      { event_type: string; regime?: string; rsi?: number }
+    >;
+  } | null;
+  readiness: {
+    ready: boolean;
+    paper_run?: {
+      progress_ratio?: number;
+      elapsed_days?: number;
+      required_days: number;
+    };
+  } | null;
   decisions: Decision[];
   error: string | null;
-  updatedAt: Date | null;
+};
+const initial: Data = {
+  health: null,
+  operations: null,
+  performance: null,
+  candles: null,
+  market: null,
+  summary: null,
+  readiness: null,
+  decisions: [],
+  error: null,
+};
+const eventLabels: Record<string, string> = {
+  hold: "Menunggu signal",
+  quant_candidate: "Signal terdeteksi",
+  risk_approved: "Risiko disetujui",
+  risk_rejected: "Risiko ditolak",
+  entry_created: "Order masuk",
+  entry_filled: "Order terisi",
+  exit_filled: "Posisi ditutup",
+};
+const reasonLabels: Record<string, string> = {
+  regime_sideways: "Pasar sideways",
+  regime_bear: "Regime bearish",
+  volume_below_average: "Volume rendah",
+  macd_not_bullish: "MACD belum bullish",
 };
 
-const initialState: DashboardState = { health: null, bot: null, operations: null, performance: null, news: null, binanceMarket: null, marketCandles: null, releaseReadiness: null, globalContext: null, orderBookContext: null, orderBookCoverage: null, orderBookResearch: null, macroContext: null, collectionStatus: null, aiShadow: null, contextFusion: null, research: null, decisionSummary: null, decisions: [], error: null, updatedAt: null };
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
-}
-
-function botState(bot: BotStatus | null) {
-  if (!bot) return "Memuat";
-  if (bot.freqtrade === "unavailable") return "Tidak terhubung";
-  return "Berjalan";
-}
-
-function humanizeRunStatus(status: string) {
-  const labels: Record<string, string> = {
-    not_started: "belum dimulai",
-    collecting: "mengumpulkan bukti",
-    interrupted: "terputus",
-    ready_for_release_evidence: "bukti rilis siap",
-  };
-  return labels[status] ?? status.replaceAll("_", " ");
-}
-
-function humanizeResearchTerm(term: string) {
-  const labels: Record<string, string> = {
-    development: "pengembangan",
-    validation: "validasi",
-    out_of_sample: "uji di luar sampel",
-    four_week_continuous_collection: "empat minggu koleksi kontinu",
-    "60_minute_forward_return": "return 60 menit",
-    "240_minute_forward_return": "return 240 menit",
-    lookahead: "anti look-ahead",
-    recursive: "uji rekursif",
-    fixed_buckets: "bucket tetap",
-    fixed_horizons: "horizon tetap",
-    shadow_only: "shadow-only",
-  };
-  return labels[term] ?? term.replaceAll("_", " ");
-}
-function humanizeResearchStatus(status: string) {
-  const labels: Record<string, string> = {
-    rejected: "Ditolak",
-    collecting_data: "Mengumpulkan data",
-    qualified: "Memenuhi syarat",
-  };
-  return labels[status] ?? status.replaceAll("_", " ");
-}
-function humanizeReason(reason: string) {
-  const labels: Record<string, string> = {
-    regime_sideways: "Regime 4H sideways",
-    regime_bear: "Regime 4H bearish",
-    regime_high_volatility: "Volatilitas 4H terlalu tinggi",
-    ema20_not_above_ema50: "EMA20 belum di atas EMA50",
-    rsi_outside_range: "RSI di luar area entry",
-    macd_not_bullish: "MACD belum bullish",
-    macd_not_improving: "MACD belum membaik",
-    volume_below_average: "Volume belum di atas rata-rata",
-    indicator_data_unavailable: "Data indikator belum lengkap",
-  };
-  return labels[reason] ?? reason.replaceAll("_", " ");
-}
-
-function isCollected(context: ShadowFreshness | null | undefined) {
-  return context?.status === "available" || context?.status === "stale";
-}
-
-function contextLabel(context: ShadowFreshness | null | undefined) {
-  if (context?.status === "available") return "Tersedia";
-  if (context?.status === "stale") return "Terlambat";
-  return "Belum tersedia";
-}
-
-function contextAge(context: ShadowFreshness | null | undefined) {
-  if (!context?.age_seconds && context?.age_seconds !== 0) return "—";
-  if (context.age_seconds < 60) return `${context.age_seconds} dtk lalu`;
-  if (context.age_seconds < 3_600) return `${Math.floor(context.age_seconds / 60)} mnt lalu`;
-  return `${(context.age_seconds / 3_600).toFixed(1)} jam lalu`;
-}
-
-function collectionStatusLabel(status: string) {
-  const labels: Record<string, string> = { collecting: "Aktif", waiting: "Menunggu", unavailable: "Perlu perhatian", configuration_invalid: "Konfigurasi perlu diperbaiki", disabled: "Dimatikan" };
-  return labels[status] ?? status.replaceAll("_", " ");
-}
-
-function orderBookReadyEstimate(coverage: OrderBookCoverage | null) {
-  if (!coverage) return "—";
-  if (coverage.status === "ready_for_research") return "Siap dievaluasi";
-  if (!coverage.estimated_ready_at) return "Menunggu snapshot pertama";
-  return `Perkiraan selesai ${formatDate(coverage.estimated_ready_at)} · sisa ${coverage.remaining_observations ?? "—"} snapshot`;
-}
-function numberFrom(payload: Record<string, unknown>, key: string) {
-  const value = payload[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function formatPrice(value: number | undefined) {
-  if (value === undefined || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: value >= 1_000 ? 0 : 2 }).format(value);
-}
-
-function auditSummary(decision: Decision) {
-  if (decision.event_type === "paper_run_continuity_interrupted") {
-    const gapSeconds = numberFrom(decision.payload, "gap_seconds");
-    const gapMinutes = gapSeconds === null ? null : Math.ceil(gapSeconds / 60);
-    return [gapMinutes === null ? "Kontinuitas paper run terputus; segmen bukti baru akan dimulai." : `Kontinuitas paper run terputus selama ${gapMinutes} menit; segmen bukti baru dimulai.`];
-  }
-  const payload = decision.payload;
-  const pair = typeof payload.pair === "string" ? payload.pair : null;
-  const reason = typeof payload.reason === "string" ? humanizeReason(payload.reason) : null;
-  const failedConditions = Array.isArray(payload.failed_conditions)
-    ? payload.failed_conditions.filter((item): item is string => typeof item === "string").map(humanizeReason)
-    : [];
-  const parts: string[] = [];
-
-  if (pair) parts.push(pair);
-  if (reason) parts.push(reason);
-  if (failedConditions.length) parts.push(`Belum lolos: ${failedConditions.join(", ")}`);
-
-  const regime = typeof payload.regime === "string" ? payload.regime : null;
-  const rsi = numberFrom(payload, "rsi");
-  const adx = numberFrom(payload, "adx_4h");
-  if (regime || rsi !== null || adx !== null) {
-    parts.push([regime ? `Regime ${regime}` : null, rsi !== null ? `RSI ${rsi.toFixed(1)}` : null, adx !== null ? `ADX 4H ${adx.toFixed(1)}` : null].filter(Boolean).join(" · "));
-  }
-
-  const stake = numberFrom(payload, "stake_amount");
-  const entry = numberFrom(payload, "entry_rate");
-  const stop = numberFrom(payload, "stop_rate");
-  if (stake !== null || entry !== null || stop !== null) {
-    parts.push([stake !== null ? `Ukuran ${stake.toFixed(2)} USDT` : null, entry !== null ? `Entry ${entry.toFixed(4)}` : null, stop !== null ? `Stop ${stop.toFixed(4)}` : null].filter(Boolean).join(" · "));
-  }
-
-  if (!parts.length) {
-    parts.push("Event operasional tercatat. Buka detail audit untuk data lengkap.");
-  }
-  return parts;
-}
+const money = (n?: number) =>
+  n === undefined
+    ? "—"
+    : new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
+const when = (value: string) =>
+  new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 
 export default function Home() {
-  const [state, setState] = useState<DashboardState>(initialState);
+  const [data, setData] = useState<Data>(initial);
+  const [pair, setPair] = useState("BTCUSDT");
+  const [section, setSection] = useState<"dashboard" | "activity" | "research">(
+    "dashboard",
+  );
   const [refreshing, setRefreshing] = useState(false);
-  const [decisionPair, setDecisionPair] = useState("all");
-  const [decisionType, setDecisionType] = useState("all");
-  const [chartPair, setChartPair] = useState("BTCUSDT");
-
-  const loadDashboard = useCallback(async () => {
+  const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [healthResponse, botResponse, operationsResponse, performanceResponse, newsResponse, binanceMarketResponse, candlesResponse, releaseReadinessResponse, contextResponse, orderBookResponse, orderBookCoverageResponse, orderBookResearchResponse, macroResponse, collectionStatusResponse, aiShadowResponse, fusionResponse, researchResponse, decisionSummaryResponse, decisionsResponse] = await Promise.all([
-        fetch("/api/trading/health", { cache: "no-store" }),
-        fetch("/api/trading/v1/bot/status", { cache: "no-store" }),
-        fetch("/api/trading/v1/operational-state", { cache: "no-store" }),
-        fetch("/api/trading/v1/bot/performance", { cache: "no-store" }),
-        fetch("/api/trading/v1/news/headlines", { cache: "no-store" }),
-        fetch("/api/trading/v1/market/binance/status", { cache: "no-store" }),
-        fetch(`/api/trading/v1/market/binance/candles?pair=${chartPair}&interval=1h&limit=48`, { cache: "no-store" }),
-        fetch("/api/trading/v1/release/readiness", { cache: "no-store" }),
-        fetch("/api/trading/v1/context/global", { cache: "no-store" }),
-        fetch("/api/trading/v1/context/orderbook", { cache: "no-store" }),
-        fetch("/api/trading/v1/context/orderbook/coverage", { cache: "no-store" }),
-        fetch("/api/trading/v1/research/orderbook/report", { cache: "no-store" }),
-        fetch("/api/trading/v1/context/macro", { cache: "no-store" }),
-        fetch("/api/trading/v1/context/collection-status", { cache: "no-store" }),
-        fetch("/api/trading/v1/ai/shadow/latest", { cache: "no-store" }),
-        fetch("/api/trading/v1/context/fusion", { cache: "no-store" }),
-        fetch("/api/trading/v1/research/experiments", { cache: "no-store" }),
-        fetch("/api/trading/v1/decisions/summary", { cache: "no-store" }),
-        fetch("/api/trading/v1/decisions", { cache: "no-store" }),
-      ]);
-      if (!healthResponse.ok || !botResponse.ok || !operationsResponse.ok || !performanceResponse.ok || !newsResponse.ok || !binanceMarketResponse.ok || !candlesResponse.ok || !releaseReadinessResponse.ok || !contextResponse.ok || !orderBookResponse.ok || !orderBookCoverageResponse.ok || !orderBookResearchResponse.ok || !macroResponse.ok || !collectionStatusResponse.ok || !aiShadowResponse.ok || !fusionResponse.ok || !researchResponse.ok || !decisionSummaryResponse.ok || !decisionsResponse.ok) {
-        throw new Error("Dashboard belum dapat mengambil data dari control API.");
-      }
-      const [health, bot, operations, performance, news, binanceMarket, marketCandles, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions] = (await Promise.all([
-        healthResponse.json(),
-        botResponse.json(),
-        operationsResponse.json(),
-        performanceResponse.json(),
-        newsResponse.json(),
-        binanceMarketResponse.json(),
-        candlesResponse.json(),
-        releaseReadinessResponse.json(),
-        contextResponse.json(),
-        orderBookResponse.json(),
-        orderBookCoverageResponse.json(),
-        orderBookResearchResponse.json(),
-        macroResponse.json(),
-        collectionStatusResponse.json(),
-        aiShadowResponse.json(),
-        fusionResponse.json(),
-        researchResponse.json(),
-        decisionSummaryResponse.json(),
-        decisionsResponse.json(),
-      ])) as [Health, BotStatus, OperationalState, BotPerformance, NewsHeadlines, BinanceMarket, MarketCandles, ReleaseReadiness, GlobalContext, OrderBookContext, OrderBookCoverage, OrderBookResearch, MacroContext, ShadowCollectionStatus, AiShadow, ContextFusion, ResearchExperiments, DecisionSummary, Decision[]];
-      setState({ health, bot, operations, performance, news, binanceMarket, marketCandles, releaseReadiness, globalContext, orderBookContext, orderBookCoverage, orderBookResearch, macroContext, collectionStatus, aiShadow, contextFusion, research, decisionSummary, decisions, error: null, updatedAt: new Date() });
+      const paths = [
+        "/health",
+        "/v1/operational-state",
+        "/v1/bot/performance",
+        `/v1/market/binance/candles?pair=${pair}&interval=1h&limit=48`,
+        "/v1/market/binance/status",
+        "/v1/decisions?limit=12",
+        "/v1/decisions/summary",
+        "/v1/release/readiness",
+      ];
+      const result = await Promise.all(
+        paths.map((path) =>
+          fetch(`/api/trading${path}`, { cache: "no-store" }),
+        ),
+      );
+      if (result.some((response) => !response.ok))
+        throw new Error("API tidak tersedia");
+      const [
+        health,
+        operations,
+        performance,
+        candles,
+        market,
+        decisions,
+        summary,
+        readiness,
+      ] = await Promise.all(result.map((response) => response.json()));
+      setData({
+        health,
+        operations,
+        performance,
+        candles,
+        market,
+        decisions,
+        summary,
+        readiness,
+        error: null,
+      });
     } catch {
-      setState((current) => ({
-        ...current,
-        error: "Control API belum tersedia. Pastikan layanan Docker API sedang berjalan.",
+      setData((previous) => ({
+        ...previous,
+        error:
+          "Control API belum aktif. Jalankan Docker agar data dashboard tersedia.",
       }));
     } finally {
       setRefreshing(false);
     }
-  }, [chartPair]);
-
+  }, [pair]);
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void loadDashboard(), 0);
-    const interval = window.setInterval(() => void loadDashboard(), 30_000);
+    const initialLoad = window.setTimeout(() => void refresh(), 0);
+    const interval = setInterval(() => void refresh(), 30_000);
     return () => {
       window.clearTimeout(initialLoad);
-      window.clearInterval(interval);
+      clearInterval(interval);
     };
-  }, [loadDashboard]);
-
-  const connected = state.health?.status === "ok";
-  const decisionCount = state.decisions.length;
-  const performance = state.performance?.performance;
-  const decisionPairs = useMemo(() => Array.from(new Set(state.decisions.map((decision) => typeof decision.payload.pair === "string" ? decision.payload.pair : null).filter((pair): pair is string => pair !== null))).sort(), [state.decisions]);
-  const decisionTypes = useMemo(() => Array.from(new Set(state.decisions.map((decision) => decision.event_type))).sort(), [state.decisions]);
-  const filteredDecisions = useMemo(() => state.decisions.filter((decision) => {
-    const pair = typeof decision.payload.pair === "string" ? decision.payload.pair : null;
-    return (decisionPair === "all" || pair === decisionPair) && (decisionType === "all" || decision.event_type === decisionType);
-  }), [decisionPair, decisionType, state.decisions]);
-  const paperRun = state.releaseReadiness?.paper_run;
-  const paperProgress = Math.min(Math.max(paperRun?.progress_ratio ?? 0, 0), 1) * 100;
-  const orderBookProgress = Math.min(Math.max(state.orderBookCoverage?.observations ?? 0, 0) / Math.max(state.orderBookCoverage?.minimum_observations ?? 1, 1), 1) * 100;
-
+  }, [refresh]);
+  const progress =
+    Math.min(Math.max(data.readiness?.paper_run?.progress_ratio ?? 0, 0), 1) *
+    100;
+  const nav = (key: typeof section, label: string, icon: string) => (
+    <button
+      onClick={() => setSection(key)}
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${section === key ? "bg-indigo-500 text-white shadow-lg shadow-indigo-950/20" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+    >
+      <Icon name={icon} />
+      {label}
+      {key === "activity" && (
+        <span className="ml-auto rounded-full bg-white/10 px-2 py-0.5 text-[10px]">
+          {data.decisions.length}
+        </span>
+      )}
+    </button>
+  );
   return (
-    <main className="dashboard-shell">
-      <section className="dashboard-header">
-        <div>
-          <p className="eyebrow">Personal trading cockpit</p>
-          <h1>Tenang memantau, jelas mengambil keputusan.</h1>
-          <p className="subheading">Satu tempat untuk melihat kondisi bot, bukti paper run, riset, dan jejak keputusan. Semua order pada fase ini tetap simulasi.</p>
+    <div className="min-h-screen bg-slate-50 text-slate-800">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col bg-slate-950 px-4 py-7 lg:flex">
+        <div className="flex items-center gap-3 px-3 text-lg font-bold tracking-tight text-white">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-500 text-sm">
+            T
+          </span>
+          Tradeboard
         </div>
-        <div className="header-actions">
-          <span className={`mode-badge ${state.operations?.environment === "live" ? "mode-live" : ""}`}>{state.operations?.environment ?? state.bot?.mode ?? "memuat"} mode</span>
-          <button className="refresh-button" onClick={() => void loadDashboard()} disabled={refreshing}>
-            {refreshing ? "Memperbarui…" : "Perbarui data"}
-          </button>
+        <p className="mt-12 px-3 text-[10px] font-bold tracking-[.16em] text-slate-600">
+          PERSONAL WORKSPACE
+        </p>
+        <nav className="mt-3 space-y-1">
+          {nav("dashboard", "Dashboard", "grid")}
+          {nav("activity", "Aktivitas", "pulse")}
+          {nav("research", "Riset", "flask")}
+        </nav>
+        <div className="mt-auto rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            Paper trading
+          </div>
+          <p className="mt-2 text-xs leading-5 text-slate-500">
+            Mode simulasi aktif.
+            <br />
+            Tidak ada order riil.
+          </p>
         </div>
-      </section>
-
-      {state.error ? <p className="notice notice-error">{state.error}</p> : null}
-      <nav className="section-nav" aria-label="Navigasi dashboard">
-        <a href="#overview">Ringkasan</a><a href="#evidence">Bukti</a><a href="#research">Riset</a><a href="#context">Konteks</a><a href="#audit">Audit</a>
-      </nav>
-
-      <section id="overview" className="status-grid" aria-label="Ringkasan kondisi bot">
-        <StatusCard label="Control API" value={connected ? "Terhubung" : "Memuat"} detail="PostgreSQL dan Redis diperiksa oleh health check." active={connected} />
-        <StatusCard label="Freqtrade" value={botState(state.bot)} detail="Execution engine Binance Spot." active={state.operations?.freqtrade_reachable === true} />
-        <StatusCard label="Binance market" value={state.binanceMarket?.reachable ? "Terhubung" : "Periksa"} detail={state.binanceMarket ? `BTC ${state.binanceMarket.pairs.BTCUSDT ?? "—"} · ETH ${state.binanceMarket.pairs.ETHUSDT ?? "—"} · Jam ${state.binanceMarket.clock_drift_seconds == null ? "—" : `${state.binanceMarket.clock_drift_seconds.toFixed(2)} dtk`}${state.binanceMarket.clock_synchronized === false ? " · perlu sinkronisasi sebelum rilis" : ""}` : "Memeriksa pair publik."} active={state.binanceMarket?.reachable === true && state.binanceMarket?.clock_synchronized !== false} />
-        <StatusCard label="Pasangan awal" value="BTC / ETH" detail="BTC/USDT dan ETH/USDT, signal 1H dan regime 4H." />
-        <StatusCard label="Kill-switch" value={state.operations?.kill_switch_enabled ? "Aktif" : "Siap"} detail={state.operations?.kill_switch_enabled ? "Entry baru diblokir oleh API." : "Tidak ada blokir entry aktif."} active={!state.operations?.kill_switch_enabled} />
-      </section>
-
-      <section className="market-overview" aria-label="Market watch">
-        <article className="panel market-chart-panel">
-          <div className="panel-heading">
-            <div><p className="eyebrow">Market watch</p><h2>Harga pasar, 48 jam terakhir</h2></div>
-            <div className="segment-control" aria-label="Pilih pair chart">
-              {(["BTCUSDT", "ETHUSDT"] as const).map((pair) => <button key={pair} className={chartPair === pair ? "selected" : ""} onClick={() => setChartPair(pair)}>{pair.replace("USDT", "/USDT")}</button>)}
+      </aside>
+      <main className="pb-24 lg:ml-64 lg:pb-10">
+        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-5 lg:px-10">
+          <div>
+            <p className="text-[10px] font-bold tracking-[.16em] text-slate-400">
+              PERSONAL TRADING DESK
+            </p>
+            <h1 className="mt-1 text-xl font-bold tracking-tight lg:text-2xl">
+              {section === "dashboard"
+                ? "Dashboard"
+                : section === "activity"
+                  ? "Aktivitas bot"
+                  : "Riset & kesiapan"}
+            </h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <span
+              className={`hidden items-center gap-2 text-xs font-medium sm:flex ${data.health?.status === "ok" ? "text-emerald-600" : "text-slate-400"}`}
+            >
+              <i
+                className={`h-2 w-2 rounded-full ${data.health?.status === "ok" ? "bg-emerald-500" : "bg-slate-300"}`}
+              />
+              {data.health?.status === "ok" ? "Terhubung" : "Memuat"}
+            </span>
+            <button
+              onClick={() => void refresh()}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600 disabled:opacity-50"
+            >
+              <Icon name="refresh" />
+              {refreshing ? "Memuat" : "Perbarui"}
+            </button>
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-amber-400 text-xs font-bold text-white">
+              F
+            </span>
+          </div>
+        </header>
+        <div className="mx-auto max-w-7xl px-5 py-7 lg:px-10">
+          {data.error && (
+            <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+              <Icon name="info" />
+              {data.error}
             </div>
-          </div>
-          <MarketChart candles={state.marketCandles?.candles ?? []} pair={chartPair} />
-          <p className="chart-note">Data candle Binance publik · interval 1 jam · hanya untuk pemantauan, bukan signal atau eksekusi.</p>
-        </article>
-        <article className="panel portfolio-panel">
-          <p className="eyebrow">Paper portfolio</p><h2>Ringkasan akun simulasi</h2>
-          <div className="portfolio-metric"><span>Profit semua posisi</span><strong className={(performance?.profit_all_coin ?? 0) >= 0 ? "positive" : "negative"}>{performance ? `${(performance.profit_all_coin ?? 0).toFixed(2)} USDT` : "—"}</strong><small>{performance ? `${(performance.profit_all_percent ?? 0).toFixed(2)}%` : "Memuat data"}</small></div>
-          <div className="portfolio-split"><div><span>Trade aktif/total</span><strong>{performance?.trade_count ?? "—"}</strong></div><div><span>Trade selesai</span><strong>{performance?.closed_trade_count ?? "—"}</strong></div></div>
-          <p className="portfolio-disclaimer">Bukan nilai rekening Binance. Angka ini berasal dari mode paper Freqtrade.</p>
-        </article>
-      </section>
-
-      <section id="evidence" className="panel release-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Release gate</p><h2>Kesiapan go-live</h2></div>
-          <span className={`event-count ${state.releaseReadiness?.ready ? "event-positive" : "event-warning"}`}>{state.releaseReadiness?.ready ? "Siap" : "Belum siap"}</span>
+          )}
+          {section === "dashboard" && (
+            <Dashboard
+              data={data}
+              pair={pair}
+              setPair={setPair}
+              progress={progress}
+            />
+          )}
+          {section === "activity" && <Activity decisions={data.decisions} />}
+          {section === "research" && (
+            <Research data={data} progress={progress} />
+          )}
         </div>
-        <p className="subheading">Status ini hanya menjadi siap bila setiap bukti rilis telah terpenuhi. Paper mode dan container sehat saja belum cukup.</p>
-        {paperRun ? <div className="evidence-progress" aria-label={`Progres paper run ${paperProgress.toFixed(1)} persen`}>
-          <div className="progress-copy"><span>Paper-run evidence</span><strong>{paperProgress.toFixed(1)}%</strong></div>
-          <div className="progress-track"><span style={{ width: `${paperProgress}%` }} /></div>
-          <div className="progress-footnote"><span>{humanizeRunStatus(paperRun.status)} · {(paperRun.elapsed_days ?? 0).toFixed(1)} dari {paperRun.required_days} hari</span><span>{paperRun.coverage_ratio == null ? "Cadence menunggu data" : `Cadence ${(paperRun.coverage_ratio * 100).toFixed(1)}%`}</span></div>
-        </div> : null}
-        <ul className="check-list">
-          {(state.releaseReadiness?.checks ?? []).map((check) => <li key={check.key} className={`release-check ${check.passed ? "passed" : "pending"}`}>{check.detail}</li>)}
-        </ul>
-        {state.binanceMarket?.clock_synchronized === false ? <p className="notice notice-error">Jam Windows berbeda {state.binanceMarket.clock_drift_seconds?.toFixed(2) ?? "—"} detik dari Binance. Sebelum rilis, buka pengaturan Waktu & bahasa Windows lalu sinkronkan waktu secara otomatis.</p> : null}        {state.releaseReadiness?.paper_run ? <p className="notice">Paper run: {state.releaseReadiness.paper_run.observations} heartbeat · {humanizeRunStatus(state.releaseReadiness.paper_run.status)} · bukti {((state.releaseReadiness.paper_run.progress_ratio ?? 0) * 100).toFixed(1)}% ({(state.releaseReadiness.paper_run.elapsed_days ?? 0).toFixed(1)} / {state.releaseReadiness.paper_run.required_days} hari){state.releaseReadiness.paper_run.coverage_ratio == null ? "" : ` · cadence ${(state.releaseReadiness.paper_run.coverage_ratio * 100).toFixed(1)}%`}{state.releaseReadiness.paper_run.estimated_ready_at ? ` · estimasi ${formatDate(state.releaseReadiness.paper_run.estimated_ready_at)}` : ""} · revisi {state.releaseReadiness.paper_run.revision ?? "belum tercatat"} · source {state.releaseReadiness.paper_run.source_sha256?.slice(0, 12) ?? "belum tercatat"}</p> : null}
-      </section>
-
-      <section id="research" className="panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Quant research</p><h2>Kandidat strategi</h2></div>
-          <span className="event-count">{state.research?.experiments.length ?? 0} eksperimen</span>
-        </div>
-        <p className="subheading">Eksperimen di bawah ini terisolasi dari bot paper. Statusnya tidak dapat mempromosikan strategi atau mengubah order.</p>
-        {(state.research?.experiments ?? []).map((experiment) => (
-          <article className="research-card" key={experiment.label}>
-            <div className="panel-heading"><div><h3>{experiment.strategy}</h3><p className="research-meta">{experiment.pairs.join(" · ")} · entry {experiment.timeframes.entry} · trend {experiment.timeframes.trend}</p></div><span className="event-count">{humanizeResearchStatus(experiment.status)}</span></div>
-            <p>{experiment.hypothesis}</p>
-            <ul className="check-list compact-list">{experiment.entry_summary.map((rule) => <li key={rule}>{rule}</li>)}</ul>
-            <dl className="detail-list compact-list">
-              <div><dt>Gate</dt><dd>{experiment.validation.gate_description ?? `PF ≥ ${experiment.validation.required_profit_factor} · expectancy positif · ≥ ${experiment.validation.required_trades_per_period} trade/periode · DD ≤ ${experiment.validation.maximum_drawdown_percent}%`}</dd></div>
-              <div><dt>Validasi</dt><dd>{experiment.validation.periods.map(humanizeResearchTerm).join(" · ")} · {experiment.validation.integrity_checks.map(humanizeResearchTerm).join(" & ")}</dd></div>
-              <div><dt>Paper jika lolos</dt><dd>{experiment.risk_profile.promotion}</dd></div>
-              <div><dt>Context shadow</dt><dd>{experiment.context_policy}</dd></div>
-              {experiment.validation.result ? <div><dt>Hasil</dt><dd>{experiment.validation.result.reason}</dd></div> : null}
-            </dl>
-            {experiment.validation.result ? <div className="research-results" aria-label={`Hasil ${experiment.strategy}`}>
-              {(["development", "validation", "out_of_sample"] as const).map((period) => {
-                const result = experiment.validation.result![period];
-                return <div key={period}><strong>{humanizeResearchTerm(period)}</strong><span>{result.trades} trade · PF {result.profit_factor.toFixed(2)} · {result.return_percent.toFixed(2)}% · DD {result.maximum_drawdown_percent.toFixed(2)}%</span></div>;
-              })}
-            </div> : null}
-          </article>
+      </main>
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-around border-t border-slate-200 bg-white px-3 py-2 lg:hidden">
+        {(
+          [
+            ["dashboard", "Dashboard", "grid"],
+            ["activity", "Aktivitas", "pulse"],
+            ["research", "Riset", "flask"],
+          ] as const
+        ).map(([key, label, icon]) => (
+          <button
+            key={key}
+            onClick={() => setSection(key)}
+            className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-1.5 text-[10px] font-semibold ${section === key ? "text-indigo-600" : "text-slate-400"}`}
+          >
+            <Icon name={icon} />
+            {label}
+          </button>
         ))}
-      </section>
-
-      <section className="content-grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <div><p className="eyebrow">Status operasi</p><h2>Bot saat ini</h2></div>
-            <span className={connected ? "dot online" : "dot"} aria-label={connected ? "Terhubung" : "Tidak terhubung"} />
-          </div>
-          <dl className="detail-list">
-            <div><dt>Mode</dt><dd>{state.bot?.mode ?? "—"}</dd></div>
-            <div><dt>Execution</dt><dd>{botState(state.bot)}</dd></div>
-            <div><dt>Audit keputusan</dt><dd>{decisionCount} event</dd></div>
-            <div><dt>Trade tertutup</dt><dd>{performance?.closed_trade_count ?? "—"}</dd></div>
-            <div><dt>Profit tertutup</dt><dd>{performance ? `${(performance.profit_closed_coin ?? 0).toFixed(2)} USDT` : "—"}</dd></div>
-            <div><dt>Profit seluruh posisi</dt><dd>{performance ? `${(performance.profit_all_coin ?? 0).toFixed(2)} USDT` : "—"}</dd></div>
-            <div><dt>Terakhir diperbarui</dt><dd>{state.updatedAt ? formatDate(state.updatedAt.toISOString()) : "—"}</dd></div>
-          </dl>
-          {state.bot?.detail ? <p className="notice notice-error">{state.bot.detail}</p> : null}
-          {state.performance?.detail ? <p className="notice notice-error">Ringkasan performa belum tersedia.</p> : null}
-        </article>
-
-        <article className="panel">
-          <p className="eyebrow">Batas fase saat ini</p><h2>Yang sedang diuji</h2>
-          <ul className="check-list">
-            <li>Market regime 4H dan signal quant 1H.</li>
-            <li>ATR stop, partial take-profit, dan trailing stop.</li>
-            <li>Daily drawdown serta cooldown setelah stop-loss beruntun.</li>
-            <li>Belum ada AI, macro, atau news yang memengaruhi transaksi.</li>
-          </ul>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Research operations</p><h2>Status pengumpul data</h2></div>
-          <span className="event-count">Shadow only</span>
-        </div>
-        <p className="subheading">Status ini memantau koleksi data riset. Tidak satu pun sumber dapat memengaruhi entry, ukuran posisi, stop, atau exit.</p>
-        {state.collectionStatus ? (
-          <dl className="detail-list">
-            {Object.entries(state.collectionStatus.sources).map(([source, status]) => (
-              <div key={source}>
-                <dt>{source.replaceAll("_", " ")}</dt>
-                <dd>{collectionStatusLabel(status.status)} · {status.enabled ? `setiap ${Math.max(Math.round(status.cadence_seconds / 60), 1)} menit` : "scheduler dimatikan"}{status.last_success_at ? ` · sukses ${formatDate(status.last_success_at)}` : ""}{status.last_failure_at ? ` · percobaan gagal ${formatDate(status.last_failure_at)}` : ""}</dd>
-              </div>
-            ))}
-          </dl>
-        ) : <div className="empty-state"><p>Memuat status pengumpul data.</p></div>}
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Market context</p><h2>Global market shadow</h2></div>
-          <span className="event-count">{state.globalContext?.status === "stale" ? "Data terlambat" : state.globalContext?.context?.regime ?? "Belum tersedia"}</span>
-        </div>
-        {state.globalContext && isCollected(state.globalContext) ? (
-          <dl className="detail-list">
-            <div><dt>Perubahan market cap 24 jam</dt><dd>{state.globalContext.context?.market_cap_change_24h?.toFixed(2) ?? "—"}%</dd></div>
-            <div><dt>Dominasi BTC</dt><dd>{state.globalContext.context?.btc_dominance?.toFixed(2) ?? "—"}%</dd></div>
-            <div><dt>Status data</dt><dd>{contextLabel(state.globalContext)} · {contextAge(state.globalContext)}</dd></div>
-            <div><dt>Snapshot</dt><dd>{state.globalContext.observed_at ? formatDate(state.globalContext.observed_at) : "—"}</dd></div>
-          </dl>
-        ) : (
-          <div className="empty-state"><p>Belum ada snapshot global market.</p><span>Data ini hanya dicatat dalam shadow mode dan belum dapat memengaruhi transaksi.</span></div>
-        )}
-      </section>
-
-      <section id="context" className="panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Market microstructure</p><h2>Order book shadow</h2></div>
-          <span className="event-count">{contextLabel(state.orderBookContext)}</span>
-        </div>
-        <p className="subheading">Imbalance dan spread dari sepuluh level teratas Binance publik. Metrik ini dicatat untuk riset dan tidak memengaruhi transaksi.</p>
-        {state.orderBookContext && isCollected(state.orderBookContext) ? (
-          <>
-          <dl className="detail-list">
-            {Object.entries(state.orderBookContext.context?.pairs ?? {}).map(([pair, metrics]) => (
-              <div key={pair}><dt>{pair}</dt><dd>Mid: {metrics.mid_price == null ? "—" : metrics.mid_price.toFixed(2)} · Imbalance: {metrics.imbalance == null ? "—" : `${(metrics.imbalance * 100).toFixed(1)}%`} · Spread: {metrics.spread_bps == null ? "—" : `${metrics.spread_bps.toFixed(2)} bps`}</dd></div>
-            ))}
-            <div><dt>Status data</dt><dd>{contextLabel(state.orderBookContext)} · {contextAge(state.orderBookContext)}</dd></div>
-            <div><dt>Snapshot</dt><dd>{state.orderBookContext.observed_at ? formatDate(state.orderBookContext.observed_at) : "—"}</dd></div>
-            <div><dt>Kesiapan riset</dt><dd>{state.orderBookCoverage ? `${state.orderBookCoverage.observations} / ${state.orderBookCoverage.minimum_observations} snapshot · ${state.orderBookCoverage.status.replaceAll("_", " ")}${state.orderBookCoverage.coverage_ratio == null ? "" : ` · cadence ${(state.orderBookCoverage.coverage_ratio * 100).toFixed(1)}%`}` : "—"}</dd></div>
-            <div><dt>Proyeksi koleksi</dt><dd>{orderBookReadyEstimate(state.orderBookCoverage)}</dd></div>
-            <div><dt>Batas outage</dt><dd>{state.orderBookCoverage?.continuity_gap_seconds ? `${Math.floor(state.orderBookCoverage.continuity_gap_seconds / 60)} menit tanpa snapshot akan memulai segmen riset baru.` : "—"}</dd></div>
-          </dl>
-          {state.orderBookCoverage ? <div className="evidence-progress compact-progress" aria-label={`Progres koleksi order book ${orderBookProgress.toFixed(1)} persen`}>
-            <div className="progress-copy"><span>Koleksi order-book untuk riset</span><strong>{orderBookProgress.toFixed(1)}%</strong></div>
-            <div className="progress-track"><span style={{ width: `${orderBookProgress}%` }} /></div>
-          </div> : null}
-          {state.orderBookResearch?.status === "evaluated" ? <div className="research-results" aria-label="Hasil riset order book">
-            {state.orderBookResearch.evaluations.map((evaluation) => <div key={`${evaluation.pair}-${evaluation.horizon_minutes}`}>
-              <strong>{evaluation.pair} · {evaluation.horizon_minutes} menit</strong>
-              <span>{Object.entries(evaluation.summary).map(([bucket, result]) => `${bucket.replaceAll("_", " ")}: ${result.samples} sampel · ${result.mean_return_bps == null ? "—" : `${result.mean_return_bps.toFixed(1)} bps`} · ${result.positive_rate == null ? "—" : `${(result.positive_rate * 100).toFixed(0)}% positif`}`).join(" | ")}</span>
-            </div>)}
-          </div> : <p className="notice">Riset forward-return hanya berjalan otomatis setelah data mencapai {state.orderBookResearch?.coverage.minimum_observations ?? state.orderBookCoverage?.minimum_observations ?? "—"} snapshot kontinu. Pair dan horizon sudah dikunci ke BTC/ETH serta 60/240 menit.</p>}
-          </>
-        ) : <div className="empty-state"><p>Belum ada snapshot order book.</p><span>Pengambilan data publik akan berjalan otomatis saat API aktif.</span></div>}
-      </section>
-
-      <section className="content-grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <div><p className="eyebrow">Macro context</p><h2>Macro shadow</h2></div>
-            <span className="event-count">{contextLabel(state.macroContext)}</span>
-          </div>
-          {state.macroContext && isCollected(state.macroContext) ? (
-            <dl className="detail-list">
-              {Object.entries(state.macroContext.context?.series ?? {}).map(([name, observation]) => (
-                <div key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{observation.value ?? "—"}{observation.date ? ` · ${observation.date}` : ""}</dd></div>
-              ))}
-              <div><dt>Status data</dt><dd>{contextLabel(state.macroContext)} · {contextAge(state.macroContext)}</dd></div>
-            </dl>
-          ) : <div className="empty-state"><p>{state.macroContext?.status === "configuration_invalid" ? "Format key FRED perlu diperbaiki." : state.macroContext?.status === "unavailable" ? "Macro belum dapat diperbarui." : "Belum ada snapshot macro."}</p><span>{state.macroContext?.detail ?? "Macro dicatat sebagai konteks dan belum memengaruhi transaksi."}</span>{state.macroContext?.last_attempt_at ? <span>Percobaan terakhir: {formatDate(state.macroContext.last_attempt_at)}</span> : null}</div>}
-        </article>
-
-        <article className="panel">
-          <div className="panel-heading">
-            <div><p className="eyebrow">AI context</p><h2>AI shadow</h2></div>
-            <span className="event-count">{state.aiShadow?.status === "stale" ? "Data terlambat" : state.aiShadow?.assessment?.market_bias ?? "Belum tersedia"}</span>
-          </div>
-          {state.aiShadow && isCollected(state.aiShadow) && state.aiShadow.assessment ? (
-            <dl className="detail-list">
-              <div><dt>Confidence</dt><dd>{(state.aiShadow.assessment.confidence * 100).toFixed(0)}%</dd></div>
-              <div><dt>Risk level</dt><dd>{state.aiShadow.assessment.risk_level}</dd></div>
-              <div><dt>Trade support</dt><dd>{state.aiShadow.assessment.trade_support ? "Ya" : "Tidak"}</dd></div>
-              <div><dt>Status data</dt><dd>{contextLabel(state.aiShadow)} · {contextAge(state.aiShadow)}</dd></div>
-              <div><dt>Ringkasan</dt><dd>{state.aiShadow.assessment.event_summary}</dd></div>
-            </dl>
-          ) : <div className="empty-state"><p>Belum ada assessment AI.</p><span>AI tetap tidak dapat menentukan atau mengirim order.</span></div>}
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Context fusion</p><h2>Rekomendasi risiko shadow</h2></div>
-          <span className="event-count">{state.contextFusion?.recommendation.decision ?? "Memuat"}</span>
-        </div>
-        <p className="subheading">Rekomendasi ini belum terhubung ke posisi atau order.</p>
-        {state.contextFusion ? (
-          <dl className="detail-list">
-            <div><dt>Risk multiplier</dt><dd>{(state.contextFusion.recommendation.risk_multiplier * 100).toFixed(0)}%</dd></div>
-            <div><dt>Alasan</dt><dd>{state.contextFusion.recommendation.reasons.join(", ").replaceAll("_", " ")}</dd></div>
-            <div><dt>Input tersedia</dt><dd>Global: {state.contextFusion.inputs_available.global_market ? "ya" : "tidak"} · Macro: {state.contextFusion.inputs_available.macro ? "ya" : "tidak"} · AI: {state.contextFusion.inputs_available.ai ? "ya" : "tidak"}</dd></div>
-            {state.contextFusion.stale_inputs && Object.values(state.contextFusion.stale_inputs).some(Boolean) ? <div><dt>Data terlambat</dt><dd>{Object.entries(state.contextFusion.stale_inputs).filter(([, stale]) => stale).map(([name]) => name.replaceAll("_", " ")).join(", ")} tidak dipakai dalam rekomendasi.</dd></div> : null}
-          </dl>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">News context</p><h2>Headline shadow</h2></div>
-          <span className="event-count">{state.news?.headlines.length ?? 0} headline</span>
-        </div>
-        {state.news?.headlines.length ? (
-          <ol className="decision-list">
-            {state.news.headlines.slice(0, 8).map((headline) => (
-              <li key={headline.url}>
-                <div><strong>{headline.title}</strong><span>{headline.source}{headline.published_at ? ` · ${formatDate(headline.published_at)}` : ""}</span></div>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <div className="empty-state"><p>Belum ada headline tersimpan.</p><span>News tetap dalam shadow mode dan tidak dapat memengaruhi order.</span></div>
-        )}
-      </section>
-
-      <section id="audit" className="panel decisions-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Entry explanation</p><h2>Mengapa bot belum membeli?</h2></div>
-          <span className="event-count">{state.decisionSummary?.events_observed ?? 0} event dianalisis</span>
-        </div>
-        <p className="subheading">Ringkasan ini menganalisis hingga 200 event terbaru. Data shadow tidak menentukan hasil di bawah ini.</p>
-        {state.decisionSummary?.hold_reasons.length ? <>
-          <div className="reason-grid">
-            {state.decisionSummary.hold_reasons.slice(0, 5).map((item) => <div key={item.reason}><strong>{humanizeReason(item.reason)}</strong><span>{item.count} kali</span></div>)}
-          </div>
-          <dl className="detail-list compact-list">
-            {Object.entries(state.decisionSummary.latest_by_pair).map(([pair, item]) => <div key={pair}><dt>{pair}</dt><dd>{item.event_type.replaceAll("_", " ")} · {item.regime ?? "—"} · RSI {item.rsi?.toFixed(1) ?? "—"} · ADX 4H {item.adx_4h?.toFixed(1) ?? "—"}</dd></div>)}
-          </dl>
-        </> : <div className="empty-state"><p>Belum ada alasan HOLD yang tercatat.</p><span>Bot akan mengisi bagian ini setelah candle berikutnya dievaluasi.</span></div>}
-      </section>
-
-      <section className="panel decisions-panel">
-        <div className="panel-heading">
-          <div><p className="eyebrow">Audit trail</p><h2>Keputusan terbaru</h2></div>
-          <span className="event-count">{filteredDecisions.length} dari {decisionCount} event terbaru</span>
-        </div>
-        <div className="decision-filters" aria-label="Filter audit keputusan">
-          <label>Pair<select value={decisionPair} onChange={(event) => setDecisionPair(event.target.value)}><option value="all">Semua pair</option>{decisionPairs.map((pair) => <option key={pair} value={pair}>{pair}</option>)}</select></label>
-          <label>Jenis event<select value={decisionType} onChange={(event) => setDecisionType(event.target.value)}><option value="all">Semua event</option>{decisionTypes.map((eventType) => <option key={eventType} value={eventType}>{eventType.replaceAll("_", " ")}</option>)}</select></label>
-        </div>
-        {decisionCount === 0 ? (
-          <div className="empty-state"><p>Belum ada event tersimpan.</p><span>Fase berikutnya menambahkan event dari kandidat signal, risk rejection, order, dan exit.</span></div>
-        ) : filteredDecisions.length === 0 ? (
-          <div className="empty-state"><p>Tidak ada event yang sesuai filter.</p><span>Ubah pair atau jenis event untuk melihat audit lain.</span></div>
-        ) : (
-          <ol className="decision-list">
-            {filteredDecisions.map((decision) => (
-              <li key={decision.id}>
-                <div><strong>{decision.event_type.replaceAll("_", " ")}</strong><span>{formatDate(decision.created_at)}</span></div>
-                <ul className="audit-summary">{auditSummary(decision).map((item, index) => <li key={`${decision.id}-${index}`}>{item}</li>)}</ul>
-                <details className="audit-raw"><summary>Detail audit teknis</summary><code>{JSON.stringify(decision.payload, null, 2)}</code></details>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-    </main>
+      </nav>
+    </div>
   );
 }
 
-function StatusCard({ label, value, detail, active = false }: { label: string; value: string; detail: string; active?: boolean }) {
+function Dashboard({
+  data,
+  pair,
+  setPair,
+  progress,
+}: {
+  data: Data;
+  pair: string;
+  setPair: (pair: string) => void;
+  progress: number;
+}) {
+  const p = data.performance?.performance;
+  const price = data.candles?.candles.at(-1)?.close;
+  const change = percent(data.candles?.candles);
   return (
-    <article className="status-card">
-      <p className="status-label">{label}</p>
-      <p className={active ? "status-value success" : "status-value"}>{value}</p>
-      <p className="status-meta">{detail}</p>
+    <>
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat
+          label="Paper P&L"
+          value={`${(p?.profit_all_coin ?? 0) >= 0 ? "+" : ""}${money(p?.profit_all_coin)} USDT`}
+          sub={`${p?.profit_all_percent?.toFixed(2) ?? "—"}% keseluruhan`}
+          icon="wallet"
+          good={(p?.profit_all_coin ?? 0) >= 0}
+        />
+        <Stat
+          label="Trade selesai"
+          value={String(p?.closed_trade_count ?? "—")}
+          sub={`${p?.trade_count ?? 0} posisi tercatat`}
+          icon="chart"
+        />
+        <Stat
+          label="Status bot"
+          value={data.operations?.freqtrade_reachable ? "Berjalan" : "Offline"}
+          sub={
+            data.operations?.kill_switch_enabled
+              ? "Entry diblokir"
+              : "Kill-switch siap"
+          }
+          icon="bot"
+          good={data.operations?.freqtrade_reachable}
+        />
+        <Stat
+          label="Paper run"
+          value={`${progress.toFixed(0)}%`}
+          sub={`${data.readiness?.paper_run?.elapsed_days?.toFixed(1) ?? 0} / ${data.readiness?.paper_run?.required_days ?? 56} hari`}
+          icon="shield"
+        />
+      </section>
+      <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_360px]">
+        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[10px] font-bold tracking-[.14em] text-slate-400">
+                MARKET OVERVIEW
+              </p>
+              <h2 className="mt-1 text-lg font-bold">
+                {pair.replace("USDT", "/USDT")}
+              </h2>
+            </div>
+            <div className="flex rounded-lg bg-slate-100 p-1">
+              {["BTCUSDT", "ETHUSDT"].map((item) => (
+                <button
+                  key={item}
+                  onClick={() => setPair(item)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold ${pair === item ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400"}`}
+                >
+                  {item.slice(0, 3)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-7 flex items-baseline gap-3">
+            <strong className="text-3xl tracking-tight">${money(price)}</strong>
+            <span
+              className={`text-xs font-bold ${change >= 0 ? "text-emerald-600" : "text-rose-500"}`}
+            >
+              {change >= 0 ? "+" : ""}
+              {change.toFixed(2)}%{" "}
+              <small className="font-normal text-slate-400">48 jam</small>
+            </span>
+          </div>
+          <Chart candles={data.candles?.candles ?? []} />
+          <div className="mt-2 flex justify-between text-[10px] text-slate-400">
+            <span>48H</span>
+            <span>Data publik Binance · candle 1H</span>
+            <span>
+              {data.candles
+                ? `Update ${when(data.candles.observed_at)}`
+                : "Menunggu data"}
+            </span>
+          </div>
+        </article>
+        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-[10px] font-bold tracking-[.14em] text-slate-400">
+            ACCOUNT STATUS
+          </p>
+          <h2 className="mt-1 text-lg font-bold">Paper account</h2>
+          <div className="mt-6 flex items-center justify-center gap-5">
+            <div
+              className="relative grid h-28 w-28 place-items-center rounded-full"
+              style={{
+                background: `conic-gradient(#4f46e5 ${progress * 3.6}deg, #eef2ff 0deg)`,
+              }}
+            >
+              <div className="grid h-[86px] w-[86px] place-items-center rounded-full bg-white">
+                <strong className="text-xl">{progress.toFixed(0)}%</strong>
+              </div>
+            </div>
+            <div className="text-xs text-slate-500">
+              <strong className="block text-sm text-slate-800">
+                Bukti terkumpul
+              </strong>
+              <span>
+                Target {data.readiness?.paper_run?.required_days ?? 56} hari
+              </span>
+            </div>
+          </div>
+          <div className="mt-7 space-y-3 border-t border-slate-100 pt-4 text-xs">
+            <Line
+              label="Paper run"
+              value={`${progress.toFixed(0)}%`}
+              color="bg-indigo-500"
+            />
+            <Line
+              label="Bot connection"
+              value={data.operations?.freqtrade_reachable ? "Aktif" : "Offline"}
+              color="bg-emerald-500"
+            />
+            <Line
+              label="Kesiapan live"
+              value={data.readiness?.ready ? "Siap" : "Belum siap"}
+              color="bg-amber-400"
+            />
+          </div>
+        </article>
+      </section>
+      <section className="mt-5 grid gap-5 lg:grid-cols-2">
+        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Header
+            kicker="MARKET WATCH"
+            title="Watchlist"
+            right="2 pair dipantau"
+          />
+          <div className="mt-3 divide-y divide-slate-100">
+            {["BTCUSDT", "ETHUSDT"].map((symbol) => (
+              <div className="flex items-center gap-3 py-3" key={symbol}>
+                <span
+                  className={`grid h-9 w-9 place-items-center rounded-full text-lg text-white ${symbol.startsWith("BTC") ? "bg-amber-400" : "bg-slate-500"}`}
+                >
+                  {symbol.startsWith("BTC") ? "₿" : "Ξ"}
+                </span>
+                <div className="flex-1">
+                  <strong className="block text-sm">
+                    {symbol.replace("USDT", "/USDT")}
+                  </strong>
+                  <span className="text-[11px] text-slate-400">
+                    Binance Spot
+                  </span>
+                </div>
+                <span
+                  className={`text-xs font-semibold ${data.market?.pairs[symbol] === "TRADING" ? "text-emerald-600" : "text-slate-400"}`}
+                >
+                  {data.market?.pairs[symbol] === "TRADING"
+                    ? "Aktif"
+                    : (data.market?.pairs[symbol] ?? "Memeriksa")}
+                </span>
+              </div>
+            ))}
+          </div>
+        </article>
+        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Header
+            kicker="LATEST DECISION"
+            title="Signal terakhir"
+            right={`${data.summary?.events_observed ?? 0} event`}
+          />
+          <Signal summary={data.summary} />
+        </article>
+      </section>
+      <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Header
+          kicker="RECENT ACTIVITY"
+          title="Aktivitas terbaru"
+          right="Audit trail"
+        />
+        <ActivityRows decisions={data.decisions.slice(0, 5)} />
+      </section>
+    </>
+  );
+}
+function Activity({ decisions }: { decisions: Decision[] }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <Header
+        kicker="AUDIT TRAIL"
+        title="Semua aktivitas terbaru"
+        right={`${decisions.length} event`}
+      />
+      <ActivityRows decisions={decisions} expanded />
+    </section>
+  );
+}
+function Research({ data, progress }: { data: Data; progress: number }) {
+  return (
+    <section className="grid gap-5 lg:grid-cols-[1.3fr_.7fr]">
+      <article className="rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-900 p-7 text-white shadow-lg">
+        <p className="text-[10px] font-bold tracking-[.14em] text-indigo-200">
+          RELEASE READINESS
+        </p>
+        <h2 className="mt-2 max-w-md text-2xl font-bold tracking-tight">
+          Strategi belum siap untuk live trading.
+        </h2>
+        <p className="mt-3 max-w-lg text-sm leading-6 text-indigo-100">
+          Paper trading dan riset tetap dipisahkan dari eksekusi order riil.
+        </p>
+        <div className="mt-7 h-2 overflow-hidden rounded-full bg-white/20">
+          <span
+            className="block h-full rounded-full bg-white"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <p className="mt-2 text-xs font-semibold">
+          {progress.toFixed(1)}% bukti paper run terkumpul
+        </p>
+      </article>
+      <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Header kicker="CURRENT CHECKS" title="Yang harus dipenuhi" />
+        <ul className="mt-5 space-y-4 text-sm text-slate-500">
+          <Check done={data.operations?.freqtrade_reachable ?? false}>
+            Koneksi engine paper trading
+          </Check>
+          <Check done={progress >= 100}>Kontinuitas paper run</Check>
+          <Check done={data.readiness?.ready ?? false}>
+            Seluruh gate rilis disetujui
+          </Check>
+        </ul>
+      </article>
+    </section>
+  );
+}
+function Header({
+  kicker,
+  title,
+  right,
+}: {
+  kicker: string;
+  title: string;
+  right?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between">
+      <div>
+        <p className="text-[10px] font-bold tracking-[.14em] text-slate-400">
+          {kicker}
+        </p>
+        <h2 className="mt-1 text-lg font-bold">{title}</h2>
+      </div>
+      {right && (
+        <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-500">
+          {right}
+        </span>
+      )}
+    </div>
+  );
+}
+function Stat({
+  label,
+  value,
+  sub,
+  icon,
+  good,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  icon: string;
+  good?: boolean;
+}) {
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <span
+        className={`grid h-9 w-9 place-items-center rounded-lg ${good ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-500"}`}
+      >
+        <Icon name={icon} />
+      </span>
+      <p className="mt-4 text-xs text-slate-400">{label}</p>
+      <strong className="mt-1 block text-xl tracking-tight">{value}</strong>
+      <span
+        className={`mt-1 block text-[11px] ${good ? "text-emerald-600" : "text-slate-400"}`}
+      >
+        {good ? "↗ " : ""}
+        {sub}
+      </span>
     </article>
   );
 }
-
-function MarketChart({ candles, pair }: { candles: MarketCandle[]; pair: string }) {
-  if (candles.length < 2) {
-    return <div className="chart-empty"><span>Memuat candle {pair.replace("USDT", "/USDT")}…</span></div>;
-  }
-  const closes = candles.map((candle) => candle.close);
-  const lowest = Math.min(...closes);
-  const highest = Math.max(...closes);
-  const range = Math.max(highest - lowest, highest * 0.002);
-  const points = closes.map((close, index) => {
-    const x = (index / (closes.length - 1)) * 100;
-    const y = 90 - ((close - lowest) / range) * 72;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
-  const first = closes[0];
-  const last = closes.at(-1) ?? first;
-  const change = ((last - first) / first) * 100;
-  const positive = change >= 0;
-
-  return <div className="chart-wrap">
-    <div className="chart-stats"><div><span>Harga terakhir</span><strong>${formatPrice(last)}</strong></div><div className={positive ? "positive" : "negative"}><span>Perubahan 48 jam</span><strong>{positive ? "+" : ""}{change.toFixed(2)}%</strong></div><div><span>Rentang</span><strong>${formatPrice(lowest)}—${formatPrice(highest)}</strong></div></div>
-    <svg className="price-chart" viewBox="0 0 100 100" role="img" aria-label={`Grafik harga ${pair} selama 48 jam`} preserveAspectRatio="none">
-      <defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop stopColor="currentColor" stopOpacity=".30"/><stop offset="1" stopColor="currentColor" stopOpacity="0"/></linearGradient></defs>
-      <path d={`M 0,90 L ${points.split(" ").join(" L ")} L 100,90 Z`} fill="url(#chartFill)" />
-      <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.15" vectorEffect="non-scaling-stroke" />
-      <circle cx="100" cy={(90 - ((last - lowest) / range) * 72).toFixed(2)} r="1.8" fill="currentColor" vectorEffect="non-scaling-stroke" />
+function Line({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: string;
+}) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-slate-500">
+        <i className={`mr-2 inline-block h-2 w-2 rounded-full ${color}`} />
+        {label}
+      </span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+function Check({
+  children,
+  done,
+}: {
+  children: React.ReactNode;
+  done: boolean;
+}) {
+  return (
+    <li className={done ? "text-emerald-700" : ""}>
+      <span
+        className={`mr-3 inline-grid h-5 w-5 place-items-center rounded-full text-xs ${done ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-400"}`}
+      >
+        {done ? "✓" : "○"}
+      </span>
+      {children}
+    </li>
+  );
+}
+function Signal({ summary }: { summary: Data["summary"] }) {
+  const row = Object.entries(summary?.latest_by_pair ?? {})[0];
+  const reason = summary?.hold_reasons[0];
+  return (
+    <div className="mt-7 flex gap-3">
+      <span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-500">
+        <Icon name="pulse" />
+      </span>
+      <div>
+        <strong className="text-sm">
+          {row
+            ? (eventLabels[row[1].event_type] ?? row[1].event_type)
+            : "Menunggu data"}
+        </strong>
+        <p className="mt-1 text-xs leading-5 text-slate-400">
+          {row
+            ? `${row[0]} · ${row[1].regime ?? "regime belum tersedia"} · RSI ${row[1].rsi?.toFixed(1) ?? "—"}`
+            : "Bot akan mengisi ringkasan setelah candle dievaluasi."}
+        </p>
+        {reason && (
+          <p className="mt-2 text-[11px] text-amber-600">
+            Alasan utama: {reasonLabels[reason.reason] ?? reason.reason}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+function ActivityRows({
+  decisions,
+  expanded = false,
+}: {
+  decisions: Decision[];
+  expanded?: boolean;
+}) {
+  if (!decisions.length)
+    return (
+      <div className="grid min-h-48 place-items-center text-center text-slate-400">
+        <div>
+          <span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-slate-100">
+            <Icon name="pulse" />
+          </span>
+          <p className="mt-3 text-sm font-medium text-slate-500">
+            Belum ada aktivitas tersimpan
+          </p>
+          <p className="mt-1 text-xs">
+            Event bot akan muncul di sini saat layanan berjalan.
+          </p>
+        </div>
+      </div>
+    );
+  return (
+    <div className="mt-3 divide-y divide-slate-100">
+      {decisions.map((item) => (
+        <div
+          className="grid grid-cols-[36px_1fr_auto] gap-3 py-3"
+          key={item.id}
+        >
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-50 text-indigo-500">
+            <Icon name={item.event_type === "hold" ? "clock" : "pulse"} />
+          </span>
+          <div>
+            <strong className="text-xs">
+              {eventLabels[item.event_type] ??
+                item.event_type.replaceAll("_", " ")}
+            </strong>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              {typeof item.payload.pair === "string"
+                ? item.payload.pair
+                : "SYSTEM"}
+              {typeof item.payload.reason === "string"
+                ? ` · ${reasonLabels[item.payload.reason] ?? item.payload.reason}`
+                : ""}
+            </p>
+            {expanded && (
+              <code className="mt-2 block overflow-auto rounded bg-slate-50 p-2 text-[10px] text-slate-500">
+                {JSON.stringify(item.payload)}
+              </code>
+            )}
+          </div>
+          <time className="text-[10px] text-slate-400">
+            {when(item.created_at)}
+          </time>
+        </div>
+      ))}
+    </div>
+  );
+}
+function percent(candles?: Candle[]) {
+  return candles && candles.length > 1
+    ? ((candles.at(-1)!.close - candles[0].close) / candles[0].close) * 100
+    : 0;
+}
+function Chart({ candles }: { candles: Candle[] }) {
+  if (candles.length < 2)
+    return (
+      <div className="mt-4 grid h-60 place-items-center rounded-xl bg-slate-50 text-xs text-slate-400">
+        Memuat data harga…
+      </div>
+    );
+  const prices = candles.map((c) => c.close);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = Math.max(max - min, max * 0.002);
+  const points = prices
+    .map(
+      (v, i) =>
+        `${((i / (prices.length - 1)) * 100).toFixed(2)},${(88 - ((v - min) / range) * 68).toFixed(2)}`,
+    )
+    .join(" ");
+  const positive = percent(candles) >= 0;
+  return (
+    <div
+      className={`relative mt-3 h-60 ${positive ? "text-emerald-500" : "text-rose-400"}`}
+    >
+      <svg
+        className="h-full w-full"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Grafik harga 48 jam"
+      >
+        <defs>
+          <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop stopColor="currentColor" stopOpacity=".22" />
+            <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path
+          d={`M 0,88 L ${points.split(" ").join(" L ")} L 100,88 Z`}
+          fill="url(#chart-fill)"
+        />
+        <polyline
+          points={points}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <span className="absolute right-0 top-1 text-[10px] text-slate-400">
+        ${money(max)}
+      </span>
+      <span className="absolute bottom-3 right-0 text-[10px] text-slate-400">
+        ${money(min)}
+      </span>
+    </div>
+  );
+}
+function Icon({ name }: { name: string }) {
+  const paths: Record<string, string> = {
+    grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+    pulse: "M3 12h4l2-6 4 12 2-6h6",
+    flask: "M9 3h6M10 3v6l-5 8a3 3 0 003 4h8a3 3 0 003-4l-5-8V3",
+    refresh: "M20 11a8 8 0 10-2 5M20 4v7h-7",
+    wallet: "M4 7a3 3 0 013-3h11v16H7a3 3 0 010-6h13v-7zM15 11h5",
+    chart: "M4 19V5M4 19h16M8 16l3-4 3 2 5-7",
+    bot: "M12 3v3M7 8H5v8h2M17 8h2v8h-2M7 7h10v11H7zM10 12h.01M14 12h.01",
+    shield: "M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z",
+    clock: "M12 7v5l3 2",
+    info: "M12 8h.01M11 12h1v4h1",
+  };
+  return (
+    <svg
+      className="h-[17px] w-[17px]"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={paths[name] ?? paths.info} />
     </svg>
-    <div className="chart-axis"><span>{new Date(candles[0].opened_at).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}</span><span>24 jam</span><span>Sekarang</span></div>
-  </div>;
+  );
 }
