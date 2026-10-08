@@ -1,11 +1,10 @@
 {
   "dry_run": true,
   "dry_run_wallet": 1000,
-  "tradable_balance_ratio": 0.25,
+  "tradable_balance_ratio": 0.99,
   "max_open_trades": 2,
   "timeframe": "1d",
   "cancel_open_orders_on_exit": true,
-  "db_url": "sqlite:////freqtrade/user_data/db/tradesv3.dryrun.sqlite",
   "unfilledtimeout": {
     "entry": 60,
     "exit": 60,

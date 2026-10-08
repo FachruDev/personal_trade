@@ -38,6 +38,7 @@ biased and should be read as an upper bound.
 | `05_move_size_vs_cost.py` | Typical move size against round-trip cost on 1H, 4H and 1D |
 | `06_daily_trend_ensemble.py` | The pre-registered daily candidate, with every sensitivity reported |
 | `07_engine_comparison_and_cost_stress.py` | Same window as the Freqtrade backtest, and cost stress up to 0.30% per side |
+| `11_engine_mark_to_market.py` | Rebuild daily mark-to-market equity from a Freqtrade backtest result zip, so engine and research drawdowns are comparable |
 | `08_fx_trend.py` | G10 FX time-series momentum against USD |
 | `09_fx_carry.py`, `10_fx_carry_decomposition.py` | G10-subset carry, and its split into carry and spot components |
 

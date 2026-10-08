@@ -11,7 +11,7 @@ class TrendSettings:
     """Daily long-or-cash trend exposure with volatility targeting (spot, no leverage)."""
 
     lookbacks: tuple[int, ...] = (50, 100, 150)
-    target_volatility: float = 0.40
+    target_volatility: float = 0.30
     volatility_window: int = 20
     rebalance_band: float = 0.10
     periods_per_year: int = 365

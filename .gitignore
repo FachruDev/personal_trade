@@ -32,6 +32,8 @@ docs/quant-reports/
 freqtrade/strategies/.experiments/
 freqtrade/user_data/data/
 freqtrade/user_data/tradesv3.sqlite*
+freqtrade/db/*
+!freqtrade/db/.gitkeep
 postgres-data/
 redis-data/
 

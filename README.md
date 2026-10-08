@@ -113,6 +113,18 @@ With `NEWS_API_KEY` configured, the NewsAPI headline collector refreshes automat
 
 The bot's source folder alone does not contain PostgreSQL audit data, paper-run evidence, or order-book snapshots. Use [portable-state/README.md](portable-state/README.md) to export and restore a portable database package when moving hosts. See [docs/vps-migration-guide.md](docs/vps-migration-guide.md) for the complete VPS checklist. Keep `.env` outside Git even for a private repository.
 
+For a Linux VPS the guide uses these scripts (Windows keeps the `.ps1` equivalents; packages are interchangeable between the two):
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/vps-init-env.sh` | Create `.env` with freshly generated secrets for the paper strategy |
+| `scripts/vps-preflight.sh` | Check Docker, clock drift, ownership, memory, exposed ports before starting |
+| `scripts/vps-compose.sh` | `docker compose` with `compose.vps.yaml` (auto-restart, log rotation) |
+| `scripts/export-portable-state.sh`, `scripts/import-portable-state.sh` | Move database and trade state between hosts |
+| `scripts/vps-backup.sh` | Rotating backups outside the repository (cron) |
+| `scripts/paper-run-summary.sh` | Paper-run status and trades at a glance |
+| `scripts/control-bot.sh` | Emergency stop or resume of new entries |
+
 ## Binance market status
 
 `GET /v1/market/binance/status` checks the public Binance endpoint for BTCUSDT and ETHUSDT, plus Binance server time, and caches the result for one minute. It uses no exchange credential and is shown on the operator dashboard so pair availability and local clock drift are visible. Drift above two seconds is shown as a warning; synchronize the host clock before a release.

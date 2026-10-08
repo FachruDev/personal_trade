@@ -1,0 +1,4 @@
+# Shell scripts and the VPS compose override must keep LF line endings even when checked out on Windows;
+# a CRLF script fails on Linux with "bad interpreter".
+*.sh text eol=lf
+compose.vps.yaml text eol=lf

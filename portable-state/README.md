@@ -23,6 +23,14 @@ VPS are required:
 .\scripts\export-portable-state.ps1 -IncludeHistoricalData
 ```
 
+On Linux (for example a VPS) use the bash equivalents. They read and write the same
+`trading-bot-portable-state/v1` manifest, so a package made on either system restores on the other:
+
+```bash
+bash scripts/export-portable-state.sh --destination ~/state
+bash scripts/import-portable-state.sh --source ~/state --force
+```
+
 Commit the resulting package only to a private repository. A private repository
 reduces exposure but is not a secret manager: never add `.env`, API keys,
 passwords, or production credentials.

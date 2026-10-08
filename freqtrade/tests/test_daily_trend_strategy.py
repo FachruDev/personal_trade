@@ -25,9 +25,12 @@ def synthetic_prices(days: int = 400, seed: int = 7) -> list[float]:
 class FakeTrade:
     id = 1
     pair = "BTC/USDT"
+    open_rate = 100.0
 
-    def __init__(self, amount: float) -> None:
+    def __init__(self, amount: float, cost_basis: float | None = None) -> None:
         self.amount = amount
+        # Freqtrade's trade.stake_amount is what was paid; default to market value at rate 100.
+        self.stake_amount = amount * 100.0 if cost_basis is None else cost_basis
         self.data: dict = {}
 
     def get_custom_data(self, key: str, default=None):
@@ -38,18 +41,20 @@ class FakeTrade:
 
 
 class FakeWallets:
-    def __init__(self, total: float) -> None:
-        self.total = total
+    def __init__(self, free: float) -> None:
+        self.free = free
 
-    def get_total_stake_amount(self) -> float:
-        return self.total
+    def get_free(self, currency: str) -> float:
+        return self.free
 
 
 def make_strategy(exposure: float, candle: str = "2026-01-01", wallet: float = 1000.0) -> DailyTrendVolStrategy:
     strategy = DailyTrendVolStrategy.__new__(DailyTrendVolStrategy)
     strategy._send_audit_event = lambda *args, **kwargs: None
+    strategy.config = {"stake_currency": "USDT", "tradable_balance_ratio": 1.0}
     strategy.wallets = FakeWallets(wallet)
-    strategy._latest_row = lambda pair: Series({"date": candle, "exposure": exposure})
+    strategy._latest_row = lambda pair: Series({"date": candle, "exposure": exposure, "close": 100.0})
+    strategy._account_equity = lambda: wallet  # rebalance tests control equity directly
     return strategy
 
 
@@ -105,6 +110,25 @@ class RebalanceTests(unittest.TestCase):
         self.assertEqual(tag, "trend_rebalance_down")
         self.assertAlmostEqual(stake, -250.0)
 
+    def test_waits_while_an_order_is_still_open(self) -> None:
+        strategy = make_strategy(exposure=0.90)
+        trade = FakeTrade(amount=0.0)
+        trade.has_open_orders = True
+        self.assertEqual(adjust(strategy, trade), (None, None))
+        self.assertNotIn("last_rebalance_candle", trade.data)  # retried once the order settles
+        trade.has_open_orders = False
+        self.assertEqual(adjust(strategy, trade)[1], "trend_rebalance_up")
+
+    def test_down_request_is_expressed_in_cost_basis_units(self) -> None:
+        # Position bought for 100 USDT that is now worth 400 (price rose 4x): reducing market value
+        # by 250 is 62.5% of the position, i.e. 62.5 USDT of its 100 USDT cost basis.
+        strategy = make_strategy(exposure=0.30)  # budget 500, target 150
+        trade = FakeTrade(amount=4.0, cost_basis=100.0)
+        stake, tag = adjust(strategy, trade)
+        self.assertEqual(tag, "trend_rebalance_down")
+        self.assertAlmostEqual(stake, -62.5)
+        self.assertLess(abs(stake), trade.stake_amount)
+
     def test_small_drift_inside_the_band_does_nothing(self) -> None:
         strategy = make_strategy(exposure=0.55)
         trade = FakeTrade(amount=2.7)  # held 270 of a 500 budget -> 0.54, within 0.10 of 0.55
@@ -141,6 +165,40 @@ def strategy_in_mode(mode: str) -> DailyTrendVolStrategy:
 
 def confirm(strategy: DailyTrendVolStrategy) -> bool:
     return strategy.confirm_trade_entry("BTC/USDT", "limit", 1.0, 100.0, "GTC", None, "daily_trend", "long")
+
+
+class EquityTests(unittest.TestCase):
+    def test_open_positions_are_valued_at_market_not_cost(self) -> None:
+        strategy = DailyTrendVolStrategy.__new__(DailyTrendVolStrategy)
+        strategy.config = {"stake_currency": "USDT", "tradable_balance_ratio": 0.5}
+        strategy.wallets = FakeWallets(free=300.0)
+        strategy._latest_row = lambda pair: Series({"close": 250.0})
+        trade = FakeTrade(amount=2.0, cost_basis=100.0)  # cost 100, worth 500 at 250
+        with patch("DailyTrendVolStrategy.Trade.get_open_trades", return_value=[trade]):
+            self.assertAlmostEqual(strategy._account_equity(), 800.0)
+            self.assertAlmostEqual(strategy._pair_budget(), 200.0)  # 800 * 0.5 / 2 pairs
+
+
+class CircuitBreakerTests(unittest.TestCase):
+    @staticmethod
+    def protection_for(ratio: float) -> dict:
+        strategy = DailyTrendVolStrategy.__new__(DailyTrendVolStrategy)
+        strategy.config = {"tradable_balance_ratio": ratio}
+        (protection,) = strategy.protections
+        return protection
+
+    def test_threshold_is_scaled_to_the_deployed_share_of_the_account(self) -> None:
+        self.assertAlmostEqual(self.protection_for(0.25)["max_allowed_drawdown"], 0.075)
+        self.assertAlmostEqual(self.protection_for(0.99)["max_allowed_drawdown"], 0.297)
+
+    def test_breaker_uses_equity_mode_and_pauses_for_a_month(self) -> None:
+        protection = self.protection_for(0.25)
+        self.assertEqual(protection["method"], "MaxDrawdown")
+        self.assertEqual(protection["calculation_mode"], "equity")
+        self.assertEqual(protection["stop_duration_candles"], 30)
+
+    def test_default_volatility_target_is_thirty_percent(self) -> None:
+        self.assertEqual(DailyTrendVolStrategy.trend.target_volatility, 0.30)
 
 
 class KillSwitchTests(unittest.TestCase):

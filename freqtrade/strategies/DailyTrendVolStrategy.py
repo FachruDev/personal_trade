@@ -37,6 +37,10 @@ class DailyTrendVolStrategy(IStrategy):
     minimal_roi = {"0": 100}
     trend = TrendSettings()
     pair_count = 2
+    # Circuit breaker, as a share of the capital this strategy deploys (not of the whole account).
+    drawdown_limit = 0.30
+    drawdown_lookback_days = 365
+    drawdown_pause_days = 30
 
     def _send_audit_event(self, event_type: str, **payload) -> None:
         """Emit best-effort audit data without affecting trade execution."""
@@ -57,8 +61,22 @@ class DailyTrendVolStrategy(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         return None if dataframe.empty else dataframe.iloc[-1]
 
+    def _account_equity(self) -> float:
+        """Free stake balance plus open positions at market value.
+
+        Freqtrade's own `get_total_stake_amount` values open trades at cost, which understates
+        equity while positions are in profit and would shrink the budget during a rally.
+        """
+        equity = self.wallets.get_free(self.config["stake_currency"])
+        for open_trade in Trade.get_open_trades():
+            row = self._latest_row(open_trade.pair)
+            price = None if row is None else self._number(row, "close")
+            equity += open_trade.amount * (price if price else open_trade.open_rate)
+        return equity
+
     def _pair_budget(self) -> float:
-        return self.wallets.get_total_stake_amount() / self.pair_count
+        ratio = float(self.config.get("tradable_balance_ratio") or 1.0)
+        return self._account_equity() * ratio / self.pair_count
 
     def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
         if self.dp.runmode.value not in {"dry_run", "live"}:
@@ -112,6 +130,26 @@ class DailyTrendVolStrategy(IStrategy):
         self._send_audit_event("risk_rejected", pair=pair, entry_rate=round(rate, 8), entry_tag=entry_tag, reason=reason)
         return False
 
+    @property
+    def protections(self) -> list[dict]:
+        """Pause new entries after a drawdown of `drawdown_limit` of the deployed capital.
+
+        Freqtrade measures this against the whole account using closed trades only, so the
+        threshold is scaled by `tradable_balance_ratio`. Open positions keep following their
+        own exit signal; the volatility target and the per-position stop limit open losses.
+        """
+        ratio = float(self.config.get("tradable_balance_ratio") or 1.0)
+        return [
+            {
+                "method": "MaxDrawdown",
+                "lookback_period_candles": self.drawdown_lookback_days,
+                "trade_limit": 2,
+                "stop_duration_candles": self.drawdown_pause_days,
+                "max_allowed_drawdown": round(self.drawdown_limit * ratio, 4),
+                "calculation_mode": "equity",
+            }
+        ]
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         settings = self.trend
         close = dataframe["close"]
@@ -151,6 +189,10 @@ class DailyTrendVolStrategy(IStrategy):
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float, min_stake: float | None, max_stake: float, current_entry_rate: float, current_exit_rate: float, current_entry_profit: float, current_exit_profit: float, **kwargs) -> tuple[float | None, str | None]:
         """Rebalance once per new daily candle using the research dead-band rule."""
+        if getattr(trade, "has_open_orders", False):
+            # Freqtrade calls this hook while an order is still pending. Sizing from a partly filled
+            # position would double the order, so wait until the position is settled.
+            return (None, None)
         row = self._latest_row(trade.pair)
         if row is None:
             return (None, None)
@@ -174,6 +216,9 @@ class DailyTrendVolStrategy(IStrategy):
         elif delta < 0:
             reduce = -delta
             if reduce >= floor and held_value - reduce >= floor:
+                # Freqtrade reads a negative stake as a share of the trade's cost basis, not of its
+                # market value, so convert; otherwise requests on a profitable position are ignored.
+                cost_basis_stake = reduce * trade.stake_amount / held_value
                 self._send_audit_event("trend_rebalance_requested", pair=trade.pair, trade_id=trade.id, direction="down", stake_amount=round(reduce, 8), target_exposure=round(target, 6))
-                return (-reduce, "trend_rebalance_down")
+                return (-cost_basis_stake, "trend_rebalance_down")
         return (None, None)

@@ -1,10 +1,17 @@
 param(
-    [switch]$SkipDownload
+    [switch]$SkipDownload,
+    # paper = the 25% paper profile; full = research profile with 99% of the wallet deployed.
+    [ValidateSet("paper", "full")]
+    [string]$Deployment = "paper",
+    # Backtests ignore protections unless enabled; use this switch to measure the circuit breaker's effect.
+    [switch]$NoProtections
 )
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $resultPath = Join-Path $projectRoot "freqtrade/backtest_results"
-$profile = "/freqtrade/user_data/config/profiles/paper-daily-trend.json"
+$profile = if ($Deployment -eq "full") { "/freqtrade/user_data/config/profiles/research-daily-trend-full.json" } else { "/freqtrade/user_data/config/profiles/paper-daily-trend.json" }
+[string[]]$protectionArgs = if ($NoProtections) { @() } else { @("--enable-protections") }
+$label = "$Deployment" + $(if ($NoProtections) { "_noprot" } else { "" })
 
 # Periods are reporting segments only. The strategy has no fitted parameters, so these are not
 # development/validation splits; see docs/daily-trend-validation.md.
@@ -35,12 +42,13 @@ try {
             --strategy-path /freqtrade/user_data/strategies `
             --timeframe 1d `
             --timerange $period.Range `
-            --cache none
+            --cache none `
+            @protectionArgs
         if ($LASTEXITCODE -ne 0) {
             throw "Daily trend $($period.Name) backtest failed."
         }
         $latest = Get-ChildItem -LiteralPath $resultPath -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        Copy-Item -LiteralPath $latest.FullName -Destination (Join-Path $resultPath "daily_trend_$($period.Name).zip") -Force
+        Copy-Item -LiteralPath $latest.FullName -Destination (Join-Path $resultPath "daily_trend_$($label)_$($period.Name).zip") -Force
     }
 }
 finally {

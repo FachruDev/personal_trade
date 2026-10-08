@@ -1,0 +1,30 @@
+# Overrides for a 24/7 Linux host. Use together with compose.yaml:
+#   docker compose -f compose.yaml -f compose.vps.yaml --env-file .env.example up -d
+# or simply: bash scripts/vps-compose.sh up -d
+#
+# Adds what an unattended host needs: every service restarts after a crash or reboot, and container
+# logs are rotated so they cannot fill the disk. Ports stay bound to 127.0.0.1 in compose.yaml; reach
+# the dashboard (3000) and Freqtrade UI (8080) through an SSH tunnel.
+
+x-logging: &rotated-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    restart: unless-stopped
+    logging: *rotated-logs
+  redis:
+    restart: unless-stopped
+    logging: *rotated-logs
+  api:
+    restart: unless-stopped
+    logging: *rotated-logs
+  web:
+    restart: unless-stopped
+    logging: *rotated-logs
+  freqtrade:
+    restart: unless-stopped
+    logging: *rotated-logs

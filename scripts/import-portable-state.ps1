@@ -27,7 +27,8 @@ if (-not (Test-Path -LiteralPath $dumpPath)) {
 }
 
 foreach ($service in @("api", "web", "freqtrade")) {
-    $running = (& docker compose ps --status running -q $service).Trim()
+    # `docker compose ps` prints nothing for a stopped service; -join turns that null into an empty string.
+    $running = ((& docker compose ps --status running -q $service) -join "").Trim()
     if (-not [string]::IsNullOrWhiteSpace($running)) {
         throw "Stop the running $service service before restoring portable state."
     }
@@ -67,6 +68,8 @@ foreach ($relative in $tradeFiles) {
         throw "Freqtrade trade file listed in manifest is missing: $relative"
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetFile) | Out-Null
+    # A stale -wal/-shm left by an earlier database would be replayed onto the restored file and corrupt it.
+    Remove-Item -LiteralPath "$targetFile-wal", "$targetFile-shm" -Force -ErrorAction SilentlyContinue
     Copy-Item -LiteralPath $sourceFile -Destination $targetFile -Force
 }
 
