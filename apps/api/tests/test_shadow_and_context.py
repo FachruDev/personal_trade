@@ -39,6 +39,28 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertEqual(summary["latest_by_pair"]["BTC/USDT"]["event_type"], "hold")
         self.assertEqual(summary["event_counts"]["quant_candidate"], 1)
 
+    def test_decision_summary_carries_daily_trend_target_fields(self) -> None:
+        events = [
+            {"event_type": "trend_target", "created_at": "now", "payload": {"pair": "BTC/USDT", "trend_score": 2 / 3, "vol_scale": 0.8, "exposure": 0.5333}},
+        ]
+        latest = api_main.summarize_decision_events(events)["latest_by_pair"]["BTC/USDT"]
+        self.assertEqual(latest["event_type"], "trend_target")
+        self.assertAlmostEqual(latest["exposure"], 0.5333)
+        self.assertAlmostEqual(latest["trend_score"], 2 / 3)
+        self.assertEqual(latest["vol_scale"], 0.8)
+
+    def test_daily_candles_are_a_supported_chart_interval(self) -> None:
+        response = httpx.Response(
+            200,
+            json=[[1_700_000_000_000, "100", "105", "99", "103", "42"]],
+            request=httpx.Request("GET", "https://binance.example/api/v3/klines"),
+        )
+        with patch("trading_api.binance_market.httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+            result = asyncio.run(fetch_market_candles("https://binance.example", "ETHUSDT", interval="1d", limit=90))
+        self.assertEqual(result["interval"], "1d")
+        with self.assertRaises(ValueError):
+            asyncio.run(fetch_market_candles("https://binance.example", "ETHUSDT", interval="1w", limit=90))
+
     def test_regime_thresholds_are_stable(self) -> None:
         self.assertEqual(classify_global_regime(-3.0), "RISK_OFF")
         self.assertEqual(classify_global_regime(1.0), "RISK_ON")

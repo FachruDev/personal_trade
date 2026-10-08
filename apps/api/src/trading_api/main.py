@@ -149,6 +149,9 @@ def summarize_decision_events(events: list[dict]) -> dict:
                 "regime": payload.get("regime"),
                 "rsi": payload.get("rsi"),
                 "adx_4h": payload.get("adx_4h"),
+                "trend_score": payload.get("trend_score"),
+                "vol_scale": payload.get("vol_scale"),
+                "exposure": payload.get("exposure"),
                 "failed_conditions": payload.get("failed_conditions", []),
             }
     return {

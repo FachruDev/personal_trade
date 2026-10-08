@@ -43,16 +43,21 @@ On the engine's window (from 2018-04-01, 0.10% per side, no slippage) the resear
 CAGR 37.8% and drawdown −36%, against buy-and-hold CAGR 33.3% and drawdown −81%.
 
 Freqtrade engine (`scripts/run_daily_trend_backtest.ps1`, fee 0.1%, no slippage, wallet 1,000 USDT; each
-period restarts the wallet):
+period restarts the wallet). The result depends on how much of the wallet is deployed
+(`tradable_balance_ratio`), so both bases are shown. Percentages are of the whole wallet.
 
-| Period | CAGR | Market change | Max underwater (balance) | Trades |
+| Period | Full deployment (0.99): CAGR / drawdown | Paper profile (0.25): CAGR / drawdown | Market change | Trades |
 | --- | ---: | ---: | ---: | ---: |
-| 2018-04 → 2026-10 (full) | 33.7% | +851% | 35.0% | 118 |
-| 2018-04 → 2021-12 | 53.5% | +748% | 20.8% | 50 |
-| 2022-01 → 2023-12 | 12.1% | −22% | 24.3% | 33 |
-| 2024-01 → 2026-10 | 25.1% | +49% | 23.4% | 37 |
+| 2018-04 → 2026-10 (full) | 33.7% / 35.0% | 9.0% / 13.9% | +851% | 118 |
+| 2018-04 → 2021-12 | 53.5% / 20.8% | 13.4% / 10.6% | +748% | 50 |
+| 2022-01 → 2023-12 | 12.1% / 24.3% | 3.7% / 6.8% | −22% | 33 |
+| 2024-01 → 2026-10 | 25.1% / 23.4% | 6.7% / 6.8% | +49% | 37 |
 
-Engine and research model agree: 33.7% against 37.8% CAGR on the same window and a 0.10% cost. The
+The paper profile deploys only a quarter of the wallet, matching the existing conservative paper cap, so
+its absolute returns and drawdowns are much smaller. Judge the strategy by the ratio of return to drawdown,
+not by the paper-profile CAGR.
+
+Engine (full deployment) and research model agree: 33.7% against 37.8% CAGR on the same window and a 0.10% cost. The
 engine is the lower, more realistic number.
 
 Robustness (research model): Sharpe stays between 1.1 and 1.3 across volatility targets of 30–50%, five
@@ -108,7 +113,25 @@ research README.
 
 ## Running it in paper (when you decide to)
 
-Set `FREQTRADE_PROFILE_CONFIG=/freqtrade/user_data/config/profiles/paper-daily-trend.json` and
-`FREQTRADE_STRATEGY=DailyTrendVolStrategy` in `.env`, then recreate the freqtrade service. Check
-`.\scripts\preflight-release.ps1 -Mode paper` first; it was written for the 1H profile and was not
-validated against this one.
+1. Check the profile. The paper preflight allows one open trade by default; this strategy trades BTC and ETH
+   together, so pass the explicit paper-only override (live keeps its one-trade limit):
+
+   ```powershell
+   .\scripts\preflight-release.ps1 -Mode paper -ProfilePath freqtrade\config\profiles\paper-daily-trend.json -PaperMaxOpenTrades 2
+   ```
+
+2. Set these in `.env` so the paper-run heartbeat records the right identity (otherwise evidence is
+   mislabelled):
+
+   ```text
+   FREQTRADE_PROFILE_CONFIG=/freqtrade/user_data/config/profiles/paper-daily-trend.json
+   FREQTRADE_STRATEGY=DailyTrendVolStrategy
+   PAPER_STRATEGY_SOURCE_FILE=/freqtrade/user_data/strategies/DailyTrendVolStrategy.py
+   PAPER_RUN_REVISION=daily-trend-v1
+   ```
+
+3. Rebuild and recreate: `docker compose up -d --build`. The dashboard (port 3000) shows the active strategy,
+   target exposure per pair, and paper-run status; Freqtrade's own UI on port 8080 shows individual trades.
+
+Changing the strategy, its source, or the revision label starts a new paper-run segment by design.
+Keep Docker running without gaps: a gap longer than 30 minutes interrupts the evidence segment.

@@ -30,12 +30,22 @@ type Data = {
     hold_reasons: Array<{ reason: string; count: number }>;
     latest_by_pair: Record<
       string,
-      { event_type: string; regime?: string; rsi?: number }
+      {
+        event_type: string;
+        regime?: string;
+        rsi?: number;
+        trend_score?: number | null;
+        vol_scale?: number | null;
+        exposure?: number | null;
+      }
     >;
   } | null;
   readiness: {
     ready: boolean;
     paper_run?: {
+      status?: string;
+      strategy?: string | null;
+      revision?: string | null;
       progress_ratio?: number;
       elapsed_days?: number;
       required_days: number;
@@ -55,9 +65,15 @@ const initial: Data = {
   decisions: [],
   error: null,
 };
+// Daily candles match the daily trend strategy; the chart is context only.
+const chart = { interval: "1d", limit: 90, span: "90 hari", caption: "candle harian" };
+// Operator tools stay local: Freqtrade serves its own UI and API on 127.0.0.1:8080.
+const freqtradeUiUrl = "http://localhost:8080";
 const eventLabels: Record<string, string> = {
   hold: "Menunggu signal",
   quant_candidate: "Signal terdeteksi",
+  trend_target: "Target eksposur diperbarui",
+  trend_rebalance_requested: "Penyesuaian ukuran posisi",
   risk_approved: "Risiko disetujui",
   risk_rejected: "Risiko ditolak",
   entry_created: "Order masuk",
@@ -69,6 +85,16 @@ const reasonLabels: Record<string, string> = {
   regime_bear: "Regime bearish",
   volume_below_average: "Volume rendah",
   macd_not_bullish: "MACD belum bullish",
+  no_trend_exposure: "Tren belum mendukung",
+  below_minimum_stake: "Di bawah ukuran minimum order",
+  kill_switch_enabled: "Kill-switch aktif",
+  kill_switch_state_unavailable: "Status kill-switch tidak tersedia",
+};
+const paperStatusLabels: Record<string, string> = {
+  ready_for_release_evidence: "Bukti lengkap",
+  collecting: "Mengumpulkan bukti",
+  interrupted: "Terputus",
+  not_started: "Belum mulai",
 };
 
 const money = (n?: number) =>
@@ -97,7 +123,7 @@ export default function Home() {
         "/health",
         "/v1/operational-state",
         "/v1/bot/performance",
-        `/v1/market/binance/candles?pair=${pair}&interval=1h&limit=48`,
+        `/v1/market/binance/candles?pair=${pair}&interval=${chart.interval}&limit=${chart.limit}`,
         "/v1/market/binance/status",
         "/v1/decisions?limit=12",
         "/v1/decisions/summary",
@@ -193,6 +219,14 @@ export default function Home() {
             <br />
             Tidak ada order riil.
           </p>
+          <a
+            href={freqtradeUiUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-block text-xs font-semibold text-indigo-300 hover:text-white"
+          >
+            Detail trade: Freqtrade UI ↗
+          </a>
         </div>
       </aside>
       <main className="pb-24 lg:ml-64 lg:pb-10">
@@ -232,6 +266,16 @@ export default function Home() {
           </div>
         </header>
         <div className="mx-auto max-w-7xl px-5 py-7 lg:px-10">
+          {data.readiness?.paper_run?.status === "interrupted" && (
+            <div
+              role="alert"
+              className="mb-5 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700"
+            >
+              <Icon name="info" />
+              Bukti paper run terputus: heartbeat bot berhenti lebih dari batas
+              kontinuitas. Periksa apakah Docker dan layanan bot berjalan.
+            </div>
+          )}
           {data.error && (
             <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
               <Icon name="info" />
@@ -352,13 +396,13 @@ function Dashboard({
             >
               {change >= 0 ? "+" : ""}
               {change.toFixed(2)}%{" "}
-              <small className="font-normal text-slate-400">48 jam</small>
+              <small className="font-normal text-slate-400">{chart.span}</small>
             </span>
           </div>
           <Chart candles={data.candles?.candles ?? []} />
           <div className="mt-2 flex justify-between text-[10px] text-slate-400">
-            <span>48H</span>
-            <span>Data publik Binance · candle 1H</span>
+            <span>{chart.span}</span>
+            <span>Data publik Binance · {chart.caption}</span>
             <span>
               {data.candles
                 ? `Update ${when(data.candles.observed_at)}`
@@ -398,6 +442,23 @@ function Dashboard({
               color="bg-indigo-500"
             />
             <Line
+              label="Strategi aktif"
+              value={data.readiness?.paper_run?.strategy ?? "—"}
+              color="bg-sky-500"
+            />
+            <Line
+              label="Status bukti"
+              value={
+                paperStatusLabels[data.readiness?.paper_run?.status ?? ""] ??
+                "—"
+              }
+              color={
+                data.readiness?.paper_run?.status === "interrupted"
+                  ? "bg-rose-500"
+                  : "bg-violet-400"
+              }
+            />
+            <Line
               label="Bot connection"
               value={data.operations?.freqtrade_reachable ? "Aktif" : "Offline"}
               color="bg-emerald-500"
@@ -433,13 +494,27 @@ function Dashboard({
                     Binance Spot
                   </span>
                 </div>
-                <span
-                  className={`text-xs font-semibold ${data.market?.pairs[symbol] === "TRADING" ? "text-emerald-600" : "text-slate-400"}`}
-                >
-                  {data.market?.pairs[symbol] === "TRADING"
-                    ? "Aktif"
-                    : (data.market?.pairs[symbol] ?? "Memeriksa")}
-                </span>
+                <div className="text-right">
+                  <span
+                    className={`block text-xs font-semibold ${data.market?.pairs[symbol] === "TRADING" ? "text-emerald-600" : "text-slate-400"}`}
+                  >
+                    {data.market?.pairs[symbol] === "TRADING"
+                      ? "Aktif"
+                      : (data.market?.pairs[symbol] ?? "Memeriksa")}
+                  </span>
+                  {typeof data.summary?.latest_by_pair[
+                    symbol.replace("USDT", "/USDT")
+                  ]?.exposure === "number" && (
+                    <span className="text-[11px] text-slate-400">
+                      Eksposur{" "}
+                      {pct(
+                        data.summary.latest_by_pair[
+                          symbol.replace("USDT", "/USDT")
+                        ].exposure as number,
+                      )}
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -623,7 +698,7 @@ function Signal({ summary }: { summary: Data["summary"] }) {
         </strong>
         <p className="mt-1 text-xs leading-5 text-slate-400">
           {row
-            ? `${row[0]} · ${row[1].regime ?? "regime belum tersedia"} · RSI ${row[1].rsi?.toFixed(1) ?? "—"}`
+            ? describeSignal(row[0], row[1])
             : "Bot akan mengisi ringkasan setelah candle dievaluasi."}
         </p>
         {reason && (
@@ -695,6 +770,19 @@ function ActivityRows({
     </div>
   );
 }
+type LatestSignal = NonNullable<Data["summary"]>["latest_by_pair"][string];
+const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
+function describeSignal(pair: string, signal: LatestSignal) {
+  // The daily trend strategy reports an exposure target; older 1H events report regime and RSI.
+  if (typeof signal.exposure === "number") {
+    const trend =
+      typeof signal.trend_score === "number" ? ` · kekuatan tren ${pct(signal.trend_score)}` : "";
+    const vol =
+      typeof signal.vol_scale === "number" ? ` · skala volatilitas ${signal.vol_scale.toFixed(2)}` : "";
+    return `${pair} · eksposur target ${pct(signal.exposure)}${trend}${vol}`;
+  }
+  return `${pair} · ${signal.regime ?? "regime belum tersedia"} · RSI ${signal.rsi?.toFixed(1) ?? "—"}`;
+}
 function percent(candles?: Candle[]) {
   return candles && candles.length > 1
     ? ((candles.at(-1)!.close - candles[0].close) / candles[0].close) * 100
@@ -727,7 +815,7 @@ function Chart({ candles }: { candles: Candle[] }) {
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
         role="img"
-        aria-label="Grafik harga 48 jam"
+        aria-label={`Grafik harga ${chart.span}`}
       >
         <defs>
           <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">

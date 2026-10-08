@@ -2,7 +2,11 @@ param(
     [ValidateSet("paper", "live")]
     [string]$Mode = "paper",
     [string]$ProfilePath,
-    [string]$EnvPath
+    [string]$EnvPath,
+    # Paper-only override for multi-pair strategies (for example the daily trend candidate, which
+    # trades BTC and ETH together). The live release limit stays at one open trade.
+    [ValidateRange(1, 2)]
+    [int]$PaperMaxOpenTrades = 1
 )
     
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -60,7 +64,7 @@ $orderTypes = Value-OrDefault "order_types"
 
 if ($Mode -eq "paper") {
     if (-not $dryRun) { $errors.Add("Paper profile must keep dry_run=true.") }
-    if ($maxOpenTrades -gt 1) { $errors.Add("Paper profile must allow at most one open trade.") }
+    if ($maxOpenTrades -gt $PaperMaxOpenTrades) { $errors.Add("Paper profile must allow at most $PaperMaxOpenTrades open trade(s); pass -PaperMaxOpenTrades for a multi-pair strategy.") }
     if ($tradableBalanceRatio -gt 0.25) { $errors.Add("Paper profile must cap tradable_balance_ratio at 0.25.") }
 }
 else {

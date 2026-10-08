@@ -10,7 +10,7 @@ import httpx
 
 
 WATCHED_SYMBOLS = ("BTCUSDT", "ETHUSDT")
-CHART_INTERVALS = ("1h",)
+CHART_INTERVALS = ("1h", "1d")
 
 
 @dataclass(frozen=True)

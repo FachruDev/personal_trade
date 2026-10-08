@@ -1,7 +1,7 @@
 {
   "dry_run": true,
   "dry_run_wallet": 1000,
-  "tradable_balance_ratio": 0.99,
+  "tradable_balance_ratio": 0.25,
   "max_open_trades": 2,
   "timeframe": "1d",
   "cancel_open_orders_on_exit": true,
