@@ -49,6 +49,19 @@ Candidates that pass the three-period gate must then pass the fixed rolling-forw
 
 The rolling-forward report is also saved under `docs/quant-reports/`. It is research evidence only and does not change the active paper strategy.
 
+## Daily trend candidate
+
+`DailyTrendVolStrategy` is a daily, long-or-cash BTC/ETH strategy that sizes positions by trend strength and
+realised volatility. It is a research candidate aimed at drawdown control; the 1H strategies above remain
+rejected. Its evidence, known weaknesses, and proposed promotion gates are in
+[docs/daily-trend-validation.md](docs/daily-trend-validation.md). It is **not** the active paper strategy.
+
+```powershell
+.\scripts\run_daily_trend_backtest.ps1
+```
+
+Research scripts that reproduce the supporting numbers (including the FX tests) are in [research/](research/README.md).
+
 ## Release profiles
 
 Validate the active paper profile before starting it:

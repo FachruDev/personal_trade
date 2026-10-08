@@ -312,3 +312,20 @@ Freqtrade look-ahead analysis found no biased entry, exit, or indicator signal.
 Recursive analysis also found no recursive or indicator-only look-ahead bias;
 the 4H EMA200 and volume average remain stable from 1,000 through 2,200 startup
 candles. Integrity passes do not override the failed sample-size gate.
+
+## Experiments 013–017 — daily timeframe and FX (research scripts in `research/`)
+
+These experiments use daily data and a different execution model from Experiments 001–012, so their
+numbers are not comparable with the 1H gates above. Detail: [daily-trend-validation.md](daily-trend-validation.md).
+
+| # | Hypothesis | Result | Decision |
+| --- | --- | --- | --- |
+| 013 | Cost explains the 1H failures: a 0.2% round trip is 57–77% of a typical 1H move, 10–15% of a daily move | Confirmed by measurement | Move research to the daily timeframe |
+| 014 | Daily SMA50/100/150 trend ensemble with 40% volatility target on BTC+ETH | Sharpe 1.26 against 0.67 buy-and-hold; drawdown −37% against −83%; Freqtrade engine CAGR 33.7%, balance drawdown 35% | **Research candidate**, drawdown control rather than extra return; not promoted |
+| 015 | Cross-sectional momentum over 20 coins | Sharpe 1.1–1.2 but drawdown −76% to −87% and survivorship biased; no profit in 2022–23 | Rejected |
+| 016 | G10 FX time-series momentum against USD (daily) | Sharpe ≈ 0 in every period after 3 bp cost | Rejected |
+| 017 | Six-currency FX carry (USD, EUR, GBP, JPY, CHF, AUD, CAD universe), top 2 / bottom 2, monthly | Carry earns about 2%/yr but spot moves cancel it; Sharpe 0.04, drawdown −55%; negative after a 1.5%/yr swap markup | Rejected on this universe (NZD, SEK, NOK absent) |
+
+Correction recorded for the audit trail: an earlier summary compared buy-and-hold CAGR 24% from 2018-03-01
+with the strategy's 36%. From 2018-04-01 buy-and-hold is 33.3%, so the supported claim is the drawdown
+reduction, not the return premium.
