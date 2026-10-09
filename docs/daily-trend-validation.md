@@ -160,7 +160,7 @@ README.
    ```
 
 3. Rebuild and recreate: `docker compose --env-file .env.example up -d --build`. The dashboard (port 3000)
-   shows the active strategy, target exposure per pair, and paper-run status; Freqtrade's own UI on port 8080
+   shows the active strategy, target exposure per pair, and paper-run status; Freqtrade's own UI on port 8080 (18080 with `compose.vps.yaml`)
    shows individual trades.
 
 Keep Docker running without gaps: a gap longer than 30 minutes interrupts the evidence segment. For a

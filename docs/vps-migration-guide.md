@@ -45,6 +45,19 @@ sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapf
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
+### Bila server dipakai bersama layanan lain
+
+Server yang sudah menjalankan database, web server, atau container lain perlu perhatian ekstra:
+
+- `compose.vps.yaml` membatasi memori tiap container (total batas sekitar 3,4 GB, pemakaian normal jauh lebih
+  rendah) dan memindahkan Freqtrade UI ke port 18080. Ubah `FREQTRADE_UI_PORT` atau `API_PORT` di `.env` bila
+  port itu juga terpakai; `vps-preflight.sh` memeriksa bentrok port.
+- Build image web memakai memori besar. Tambahkan swap dulu dan bangun satu per satu:
+  `bash scripts/vps-compose.sh build api freqtrade` lalu `bash scripts/vps-compose.sh build web`.
+- Periksa pemakaian nyata setelah sehari (`docker stats --no-stream`) dan sesuaikan batas memori.
+- Bot ini mengumpulkan bukti berkelanjutan: reboot atau beban berat di server bersama memutus kontinuitas
+  (gap lebih dari 30 menit memulai segmen baru). Untuk 56 hari yang bersih, VPS khusus lebih aman.
+
 ## 2. Deploy
 
 ```bash
@@ -86,10 +99,12 @@ dan `status: collecting`.
 Dashboard dan Freqtrade UI hanya tersedia di `127.0.0.1` VPS. Dari komputer lokal buka SSH tunnel:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:8080 USER@ALAMAT-VPS
+ssh -L 3000:127.0.0.1:3000 -L 8080:127.0.0.1:18080 USER@ALAMAT-VPS
 ```
 
-Lalu buka `http://localhost:3000` (dashboard) dan `http://localhost:8080` (Freqtrade UI, login dengan
+Di VPS, Freqtrade UI terbit di port **18080** (bukan 8080, yang sering sudah terpakai di server bersama);
+tunnel di atas memetakannya kembali ke `localhost:8080` di komputer Anda, sehingga tautan di dashboard tetap
+bekerja. Buka `http://localhost:3000` (dashboard) dan `http://localhost:8080` (Freqtrade UI, login dengan
 `FREQTRADE_API_USERNAME` dan `FREQTRADE_API_PASSWORD` dari `.env` VPS).
 
 ## 4. Operasi selama 56 hari

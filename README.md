@@ -19,7 +19,7 @@ uses that endpoint for its decision timeline.
 | Port | What it is | Use it for |
 | --- | --- | --- |
 | `3000` | This project's operator dashboard (`apps/web`), backed by the control API on `8000` | Release readiness, paper-run evidence, audit trail of decisions, target exposure per pair, kill-switch state |
-| `8080` | Freqtrade's own REST API and bundled FreqUI | Individual trades, order and position detail, per-trade charts, manual bot control |
+| `8080` (`18080` on the VPS profile) | Freqtrade's own REST API and bundled FreqUI | Individual trades, order and position detail, per-trade charts, manual bot control |
 
 Both are bound to `127.0.0.1` only; never publish them to the internet. For a VPS, reach them through an SSH
 tunnel. The dashboard links to the Freqtrade UI. Log in to port `8080` with `FREQTRADE_API_USERNAME` and

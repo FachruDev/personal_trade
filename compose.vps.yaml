@@ -2,9 +2,15 @@
 #   docker compose -f compose.yaml -f compose.vps.yaml --env-file .env.example up -d
 # or simply: bash scripts/vps-compose.sh up -d
 #
-# Adds what an unattended host needs: every service restarts after a crash or reboot, and container
-# logs are rotated so they cannot fill the disk. Ports stay bound to 127.0.0.1 in compose.yaml; reach
-# the dashboard (3000) and Freqtrade UI (8080) through an SSH tunnel.
+# Adds what an unattended, possibly shared host needs:
+# - every service restarts after a crash or reboot;
+# - container logs are rotated so they cannot fill the disk;
+# - each container has a memory cap so a runaway process cannot starve other workloads on the host;
+# - the Freqtrade UI is published on 127.0.0.1:${FREQTRADE_UI_PORT:-18080} instead of 8080, which shared
+#   servers often already use.
+# Ports stay bound to 127.0.0.1; reach the dashboard (3000) and Freqtrade UI through an SSH tunnel.
+#
+# Memory caps are starting points. Check real use with `docker stats --no-stream` after a day and adjust.
 
 x-logging: &rotated-logs
   driver: json-file
@@ -16,15 +22,22 @@ services:
   postgres:
     restart: unless-stopped
     logging: *rotated-logs
+    mem_limit: 768m
   redis:
     restart: unless-stopped
     logging: *rotated-logs
+    mem_limit: 128m
   api:
     restart: unless-stopped
     logging: *rotated-logs
+    mem_limit: 512m
   web:
     restart: unless-stopped
     logging: *rotated-logs
+    mem_limit: 512m
   freqtrade:
     restart: unless-stopped
     logging: *rotated-logs
+    mem_limit: 1536m
+    ports: !override
+      - "127.0.0.1:${FREQTRADE_UI_PORT:-18080}:8080"

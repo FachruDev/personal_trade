@@ -72,10 +72,13 @@ echo "Storage and memory"
 mkdir -p freqtrade/db freqtrade/logs freqtrade/data
 for dir in freqtrade/db freqtrade/logs freqtrade/data; do
     owner="$(stat -c %u "$dir" 2>/dev/null || echo unknown)"
+    mode="$(stat -c %a "$dir" 2>/dev/null || echo 0)"
     if [ "$owner" = "1000" ]; then
         pass "$dir is owned by uid 1000 (the Freqtrade container user)"
+    elif [ $((8#$mode & 2)) -ne 0 ] 2>/dev/null; then
+        warn "$dir is world-writable (owner uid $owner): works, but prefer sudo chown -R 1000:1000 freqtrade"
     else
-        fail "$dir is owned by uid $owner; run: sudo chown -R 1000:1000 freqtrade"
+        fail "$dir is owned by uid $owner and not writable by the container; run: sudo chown -R 1000:1000 freqtrade (or chmod a+rwx $dir)"
     fi
 done
 free_kb="$(df -Pk "$root" | awk 'NR==2 {print $4}')"
@@ -86,6 +89,25 @@ if [ "${mem_mb:-0}" -ge 1500 ] || [ "${swap_mb:-0}" -ge 1024 ]; then
     pass "memory available ${mem_mb:-?} MiB, swap ${swap_mb:-0} MiB (the web image build needs about 1.5 GiB)"
 else
     warn "low memory (${mem_mb:-?} MiB available, swap ${swap_mb:-0} MiB): add 2 GiB swap before building the web image"
+fi
+
+echo "Host ports (shared servers often use 8080 and 3000)"
+env_value() { grep -E "^$1=" .env 2>/dev/null | head -n1 | cut -d= -f2-; }
+api_port="$(env_value API_PORT)"; api_port="${api_port:-8000}"
+ui_port="$(env_value FREQTRADE_UI_PORT)"; ui_port="${ui_port:-18080}"
+if docker compose ps -q 2>/dev/null | grep -q .; then
+    pass "stack already running; skipping the free-port check"
+elif command -v ss >/dev/null 2>&1; then
+    for entry in "dashboard:3000" "control-api:$api_port" "freqtrade-ui:$ui_port"; do
+        name="${entry%%:*}"; port="${entry##*:}"
+        if ss -ltnH "sport = :$port" 2>/dev/null | grep -q .; then
+            fail "port $port ($name) is already in use on this host; set another port in .env (API_PORT / FREQTRADE_UI_PORT)"
+        else
+            pass "port $port ($name) is free"
+        fi
+    done
+else
+    warn "ss not found; could not check for port conflicts"
 fi
 
 echo "Network exposure"
