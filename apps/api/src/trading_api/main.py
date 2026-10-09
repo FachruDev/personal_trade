@@ -162,6 +162,29 @@ def summarize_decision_events(events: list[dict]) -> dict:
     }
 
 
+def latest_trend_targets(events: list[dict]) -> dict[str, dict]:
+    """Newest daily-trend target per pair.
+
+    Kept apart from the recent-event window: market and order-book refreshes arrive every few minutes and
+    would otherwise push the once-a-day trend_target event out of view.
+    """
+    latest: dict[str, dict] = {}
+    for event in events:
+        if event["event_type"] != "trend_target":
+            continue
+        payload = event.get("payload", {})
+        pair = payload.get("pair")
+        if isinstance(pair, str) and pair not in latest:
+            latest[pair] = {
+                "created_at": event["created_at"],
+                "candle_at": payload.get("candle_at"),
+                "trend_score": payload.get("trend_score"),
+                "vol_scale": payload.get("vol_scale"),
+                "exposure": payload.get("exposure"),
+            }
+    return latest
+
+
 def optional_shadow_scheduler_enabled(api_key: str, refresh_seconds: int) -> bool:
     """Only call optional providers when a key and an explicit cadence exist."""
     return bool(api_key.strip()) and refresh_seconds > 0
@@ -1325,7 +1348,14 @@ async def decision_summary(limit: int = 200) -> dict:
             "SELECT id, event_type, payload, created_at FROM bot_audit_events ORDER BY id DESC LIMIT $1",
             min(max(limit, 1), 500),
         )
-    return summarize_decision_events([normalize_audit_event(dict(row)) for row in rows])
+        trend_rows = await connection.fetch(
+            "SELECT DISTINCT ON (payload->>'pair') id, event_type, payload, created_at FROM bot_audit_events "
+            "WHERE event_type = 'trend_target' AND payload->>'pair' IS NOT NULL "
+            "ORDER BY payload->>'pair', id DESC"
+        )
+    summary = summarize_decision_events([normalize_audit_event(dict(row)) for row in rows])
+    summary["latest_trend_by_pair"] = latest_trend_targets([normalize_audit_event(dict(row)) for row in trend_rows])
+    return summary
 
 
 @app.post("/internal/freqtrade", status_code=202)

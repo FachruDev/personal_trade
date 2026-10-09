@@ -49,6 +49,21 @@ class GlobalMarketContextTests(unittest.TestCase):
         self.assertAlmostEqual(latest["trend_score"], 2 / 3)
         self.assertEqual(latest["vol_scale"], 0.8)
 
+    def test_latest_trend_target_survives_a_flood_of_newer_unrelated_events(self) -> None:
+        flood = [{"event_type": "orderbook_context_refreshed", "created_at": f"t{i}", "payload": {}} for i in range(300)]
+        events = flood + [
+            {"event_type": "trend_target", "created_at": "new", "payload": {"pair": "BTC/USDT", "trend_score": 1.0, "vol_scale": 0.7, "exposure": 0.7, "candle_at": "d2"}},
+            {"event_type": "trend_target", "created_at": "old", "payload": {"pair": "BTC/USDT", "exposure": 0.1}},
+            {"event_type": "trend_target", "created_at": "eth", "payload": {"pair": "ETH/USDT", "exposure": 0.0}},
+            {"event_type": "trend_target", "created_at": "bad", "payload": {"exposure": 0.5}},
+        ]
+        latest = api_main.latest_trend_targets(events)
+        self.assertEqual(set(latest), {"BTC/USDT", "ETH/USDT"})
+        self.assertEqual(latest["BTC/USDT"]["created_at"], "new")  # newest wins, events are newest first
+        self.assertEqual(latest["BTC/USDT"]["exposure"], 0.7)
+        self.assertEqual(latest["ETH/USDT"]["exposure"], 0.0)
+        self.assertEqual(api_main.latest_trend_targets([]), {})
+
     def test_daily_candles_are_a_supported_chart_interval(self) -> None:
         response = httpx.Response(
             200,

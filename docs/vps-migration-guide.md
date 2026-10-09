@@ -96,6 +96,10 @@ Heartbeat pertama muncul sampai 15 menit setelah menyalakan; sebelum itu status 
 lama atau `not_started`. Pastikan kemudian `strategy: DailyTrendVolStrategy`, `revision: daily-trend-v2`,
 dan `status: collecting`.
 
+Dashboard punya tab **Riset** dengan kartu **Kontinuitas bukti**: awal segmen, heartbeat terakhir (merah bila
+lewat 30 menit), jumlah observasi, kelengkapan, dan estimasi selesai. Bukti sehat bila awal segmen tidak
+bergeser dan observasi terus bertambah. Angka mentahnya juga ada di `/api/trading/v1/paper-run`.
+
 Dashboard dan Freqtrade UI hanya tersedia di `127.0.0.1` VPS. Dari komputer lokal buka SSH tunnel:
 
 ```bash
@@ -213,6 +217,11 @@ sama. Bila Anda kembali ke komputer lokal, pulihkan snapshot terbaru dari VPS le
 bercabang. Jangan pernah menyalakan dua instance Freqtrade untuk pair yang sama.
 
 ## Keamanan
+
+Proxy dashboard (`/api/trading/...`) hanya meneruskan sembilan jalur baca yang dipakai dashboard
+(`apps/web/next.config.ts`). Webhook `/internal/freqtrade` yang tidak berautentikasi dan endpoint kontrol tidak
+terjangkau lewat port web; permintaan ke sana mendapat 404. Meski begitu, port 3000 tetap tidak boleh
+dibuka ke internet: data posisi dan audit tetap terbaca tanpa login.
 
 Jangan commit atau kirim lewat chat: `.env`, Binance API key dan secret, FRED/NewsAPI/CoinGecko/AI key,
 password Freqtrade, atau JWT secret. Repositori private bukan secret manager: bila sebuah kunci pernah masuk

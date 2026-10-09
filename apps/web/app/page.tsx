@@ -9,6 +9,21 @@ type Decision = {
   payload: Record<string, unknown>;
   created_at: string;
 };
+type PaperRun = {
+  status?: string;
+  strategy?: string | null;
+  revision?: string | null;
+  first_observed_at?: string | null;
+  last_observed_at?: string | null;
+  estimated_ready_at?: string | null;
+  observations?: number;
+  expected_observations?: number;
+  coverage_ratio?: number | null;
+  progress_ratio?: number;
+  elapsed_days?: number;
+  remaining_days?: number;
+  required_days: number;
+};
 type Data = {
   health: { status: string } | null;
   operations: {
@@ -39,17 +54,20 @@ type Data = {
         exposure?: number | null;
       }
     >;
+    // Newest daily-trend target per pair, independent of how many other events arrived since.
+    latest_trend_by_pair?: Record<
+      string,
+      {
+        created_at?: string;
+        trend_score?: number | null;
+        vol_scale?: number | null;
+        exposure?: number | null;
+      }
+    >;
   } | null;
   readiness: {
     ready: boolean;
-    paper_run?: {
-      status?: string;
-      strategy?: string | null;
-      revision?: string | null;
-      progress_ratio?: number;
-      elapsed_days?: number;
-      required_days: number;
-    };
+    paper_run?: PaperRun;
   } | null;
   decisions: Decision[];
   error: string | null;
@@ -459,6 +477,16 @@ function Dashboard({
               }
             />
             <Line
+              label="Heartbeat terakhir"
+              value={agoLabel(minutesSince(data.readiness?.paper_run?.last_observed_at))}
+              color={
+                (minutesSince(data.readiness?.paper_run?.last_observed_at) ?? 0) >
+                CONTINUITY_GAP_MINUTES
+                  ? "bg-rose-500"
+                  : "bg-emerald-500"
+              }
+            />
+            <Line
               label="Bot connection"
               value={data.operations?.freqtrade_reachable ? "Aktif" : "Offline"}
               color="bg-emerald-500"
@@ -502,13 +530,13 @@ function Dashboard({
                       ? "Aktif"
                       : (data.market?.pairs[symbol] ?? "Memeriksa")}
                   </span>
-                  {typeof data.summary?.latest_by_pair[
+                  {typeof data.summary?.latest_trend_by_pair?.[
                     symbol.replace("USDT", "/USDT")
                   ]?.exposure === "number" && (
                     <span className="text-[11px] text-slate-400">
                       Eksposur{" "}
                       {pct(
-                        data.summary.latest_by_pair[
+                        data.summary.latest_trend_by_pair[
                           symbol.replace("USDT", "/USDT")
                         ].exposure as number,
                       )}
@@ -586,7 +614,68 @@ function Research({ data, progress }: { data: Data; progress: number }) {
           </Check>
         </ul>
       </article>
+      <Continuity run={data.readiness?.paper_run} className="lg:col-span-2" />
     </section>
+  );
+}
+function Continuity({
+  run,
+  className = "",
+}: {
+  run?: PaperRun;
+  className?: string;
+}) {
+  const minutes = minutesSince(run?.last_observed_at);
+  const stale = minutes !== undefined && minutes > CONTINUITY_GAP_MINUTES;
+  const coverage = run?.coverage_ratio;
+  const rows: Array<{ label: string; value: string; bad?: boolean }> = [
+    { label: "Segmen dimulai", value: utcDateTime(run?.first_observed_at) },
+    { label: "Heartbeat terakhir", value: agoLabel(minutes), bad: stale },
+    {
+      label: "Observasi",
+      value:
+        run?.observations !== undefined
+          ? `${run.observations} / ${run.expected_observations ?? "—"}`
+          : "—",
+    },
+    {
+      label: "Kelengkapan heartbeat",
+      value: typeof coverage === "number" ? `${(coverage * 100).toFixed(1)}%` : "—",
+    },
+    { label: "Estimasi selesai", value: utcDateTime(run?.estimated_ready_at) },
+    {
+      label: "Sisa waktu",
+      value:
+        typeof run?.remaining_days === "number" ? `${run.remaining_days.toFixed(1)} hari` : "—",
+    },
+  ];
+  return (
+    <article
+      className={`rounded-2xl border bg-white p-6 shadow-sm ${stale || run?.status === "interrupted" ? "border-rose-200" : "border-slate-200"} ${className}`}
+    >
+      <Header
+        kicker="EVIDENCE CONTINUITY"
+        title="Kontinuitas bukti"
+        right={paperStatusLabels[run?.status ?? ""] ?? "—"}
+      />
+      <dl className="mt-5 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <dt className="text-xs text-slate-400">{row.label}</dt>
+            <dd
+              className={`mt-0.5 font-semibold ${row.bad ? "text-rose-600" : "text-slate-800"}`}
+            >
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-5 text-xs leading-5 text-slate-400">
+        Bukti sehat bila awal segmen tidak bergeser dan jumlah observasi terus naik (satu per
+        15 menit). Jeda heartbeat lebih dari {CONTINUITY_GAP_MINUTES} menit memulai segmen
+        baru dan menghitung ulang dari nol. Waktu ditampilkan dalam UTC.
+      </p>
+    </article>
   );
 }
 function Header({
@@ -684,6 +773,7 @@ function Check({
 }
 function Signal({ summary }: { summary: Data["summary"] }) {
   const row = Object.entries(summary?.latest_by_pair ?? {})[0];
+  const trends = Object.entries(summary?.latest_trend_by_pair ?? {});
   const reason = summary?.hold_reasons[0];
   return (
     <div className="mt-7 flex gap-3">
@@ -696,11 +786,23 @@ function Signal({ summary }: { summary: Data["summary"] }) {
             ? (eventLabels[row[1].event_type] ?? row[1].event_type)
             : "Menunggu data"}
         </strong>
-        <p className="mt-1 text-xs leading-5 text-slate-400">
-          {row
-            ? describeSignal(row[0], row[1])
-            : "Bot akan mengisi ringkasan setelah candle dievaluasi."}
-        </p>
+        {trends.length > 0 ? (
+          <ul className="mt-1 space-y-1 text-xs leading-5 text-slate-400">
+            {trends.map(([pair, target]) => (
+              <li key={pair}>
+                {pair} · eksposur target {pct(target.exposure ?? 0)} · kekuatan tren{" "}
+                {pct(target.trend_score ?? 0)} · skala volatilitas{" "}
+                {typeof target.vol_scale === "number" ? target.vol_scale.toFixed(2) : "—"}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            {row
+              ? describeSignal(row[0], row[1])
+              : "Bot akan mengisi ringkasan setelah candle dievaluasi."}
+          </p>
+        )}
         {reason && (
           <p className="mt-2 text-[11px] text-amber-600">
             Alasan utama: {reasonLabels[reason.reason] ?? reason.reason}
@@ -770,6 +872,31 @@ function ActivityRows({
     </div>
   );
 }
+// The API starts a new evidence segment when the heartbeat gap exceeds this (PAPER_RUN_CONTINUITY_GAP_SECONDS).
+const CONTINUITY_GAP_MINUTES = 30;
+function minutesSince(iso?: string | null) {
+  if (!iso) return undefined;
+  const time = Date.parse(iso);
+  return Number.isNaN(time) ? undefined : Math.max(0, Math.round((Date.now() - time) / 60000));
+}
+function agoLabel(minutes?: number) {
+  if (minutes === undefined) return "—";
+  if (minutes < 1) return "baru saja";
+  if (minutes < 90) return `${minutes} menit lalu`;
+  if (minutes < 60 * 48) return `${(minutes / 60).toFixed(1)} jam lalu`;
+  return `${Math.round(minutes / 1440)} hari lalu`;
+}
+const utcDateTime = (iso?: string | null) =>
+  iso
+    ? new Intl.DateTimeFormat("id-ID", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "UTC",
+      }).format(new Date(iso)) + " UTC"
+    : "—";
 type LatestSignal = NonNullable<Data["summary"]>["latest_by_pair"][string];
 const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
 function describeSignal(pair: string, signal: LatestSignal) {
